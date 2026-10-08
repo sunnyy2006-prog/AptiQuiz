@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { io } from "socket.io-client";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Avatar, Badge, Button, GlassCard, ScreenTransition, TimerBar, Toast } from "./components/ui";
 
 const socket = io();
 const STORAGE = {
@@ -11,11 +12,11 @@ const STORAGE = {
 };
 
 const colors = {
-  ink: "#172033",
-  muted: "#5e6b80",
-  teal: "#007c83",
-  coral: "#d95d39",
-  gold: "#d39b24"
+  ink: "#f5f7ff",
+  muted: "#9aa8c7",
+  teal: "#32d6ff",
+  coral: "#ff6b7a",
+  gold: "#c8f66b"
 };
 
 export default function App() {
@@ -182,15 +183,18 @@ export default function App() {
         <button className="league-link" onClick={() => setScreen("league")} type="button">View league <span>↗</span></button>
       </header>
       <main className="page">
-        {screen === "home" && <Home mode={mode} setMode={setMode} name={name} setName={setName} code={code} setCode={setCode} collegeName={collegeName} setCollegeName={setCollegeName} submit={submit} error={error} />}
-        {screen === "lobby" && <Lobby room={room} code={code} name={name} isHost={isHost} error={error} onStart={() => socket.emit("game:start")} />}
-        {screen === "question" && question && <Question question={question} seconds={seconds} answered={answered} answer={answer} />}
-        {screen === "reveal" && <Reveal reveal={reveal} />}
-        {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} />}
-        {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} isHost={isHost} onDashboard={() => socket.emit("host:results")} onHome={() => window.location.reload()} />}
-        {screen === "host-results" && <HostResults data={hostResults} onHome={() => window.location.reload()} />}
-        {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} error={error} onHome={() => setScreen("home")} />}
+        <ScreenTransition key={screen}>
+          {screen === "home" && <Home mode={mode} setMode={setMode} name={name} setName={setName} code={code} setCode={setCode} collegeName={collegeName} setCollegeName={setCollegeName} submit={submit} error={error} />}
+          {screen === "lobby" && <Lobby room={room} code={code} name={name} isHost={isHost} error={error} onStart={() => socket.emit("game:start")} />}
+          {screen === "question" && question && <Question question={question} seconds={seconds} answered={answered} answer={answer} />}
+          {screen === "reveal" && <Reveal reveal={reveal} />}
+          {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} />}
+          {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} isHost={isHost} onDashboard={() => socket.emit("host:results")} onHome={() => window.location.reload()} />}
+          {screen === "host-results" && <HostResults data={hostResults} onHome={() => window.location.reload()} />}
+          {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} error={error} onHome={() => setScreen("home")} />}
+        </ScreenTransition>
       </main>
+      <Toast message={error} onDismiss={() => setError("")} />
     </div>
   );
 }
@@ -202,9 +206,9 @@ function Home({ mode, setMode, name, setName, code, setCode, collegeName, setCol
         <div className="eyebrow">Fast minds. One room.</div>
         <h1>Make every answer <em>count.</em></h1>
         <p>Challenge your crew with live aptitude rounds, instant reveals, and a leaderboard that keeps everyone moving.</p>
-        <div className="trust-row"><span>⚡ Real-time play</span><span>♧ Up to 50 players</span><span>◉ No sign-up</span></div>
+        <div className="trust-row"><span>✦ Real-time play</span><span>◈ Up to 50 players</span><span>◉ No sign-up</span></div>
       </div>
-      <form className="join-card" onSubmit={submit}>
+      <GlassCard className="join-card"><form onSubmit={submit}>
         <div className="segmented" role="tablist" aria-label="Room action">
           <button className={mode === "join" ? "active" : ""} onClick={() => setMode("join")} role="tab" type="button">Join a room</button>
           <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")} role="tab" type="button">Create room</button>
@@ -215,9 +219,9 @@ function Home({ mode, setMode, name, setName, code, setCode, collegeName, setCol
         {mode === "create" && <label>College <span className="optional-label">(optional)</span><input maxLength="120" onChange={(event) => setCollegeName(event.target.value)} placeholder="e.g. Delhi University" value={collegeName} /></label>}
         {mode === "join" && <label>Room code<input aria-describedby="code-help" autoCapitalize="characters" maxLength="5" onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCDE" required value={code} /><small id="code-help">5 characters, shown by your host</small></label>}
         {error && <p className="error" role="alert">{error}</p>}
-        <button className="primary-button" type="submit">{mode === "create" ? "Create room →" : "Join room →"}</button>
+        <Button type="submit">{mode === "create" ? "Create room →" : "Join room →"}</Button>
         <p className="privacy-note">Your name is only visible to players in this room.</p>
-      </form>
+      </form></GlassCard>
     </section>
   );
 }
@@ -229,16 +233,15 @@ function Lobby({ room, code, name, isHost, error, onStart }) {
     <section className="lobby-layout">
       <div className="section-heading"><div><div className="eyebrow">Room lobby</div><h1>Gather your team.</h1><p>Everyone’s here? The host can start the first round.</p></div><span className="status-badge"><i /> Waiting</span></div>
       <div className="lobby-grid">
-        <div className="code-card"><div><span className="label">ROOM CODE</span><strong>{code}</strong><button className="copy-button" onClick={() => navigator.clipboard?.writeText(code)} type="button">Copy code</button></div><QRCodeSVG bgColor="#fffdf8" fgColor={colors.ink} level="M" size={112} value={inviteUrl} title="QR code to join this room" /></div>
-        <div className="players-card"><div className="card-top"><div><span className="label">PLAYERS</span><h2>{players.length}<small> / 50</small></h2></div><span className="you-badge">You: {name}</span></div><ul className="player-list">{players.map((player, index) => <li className="player-row" key={`${player.name}-${index}`}><span className="avatar">{player.name?.charAt(0).toUpperCase()}</span><span>{player.name}</span>{index === 0 && <span className="host-label">HOST</span>}<span className={player.connected ? "online-dot" : "offline-dot"} /> </li>)}</ul>{error && <p className="error" role="alert">{error}</p>}{isHost ? <button className="primary-button" disabled={players.length < 1} onClick={onStart} type="button">Start game <span>→</span></button> : <p className="waiting-message"><span className="pulse-dot" /> Waiting for the host to start…</p>}</div>
+        <GlassCard className="code-card"><div><span className="label">ROOM CODE</span><strong>{code}</strong><button className="copy-button" onClick={() => navigator.clipboard?.writeText(code)} type="button">Copy code</button></div><QRCodeSVG bgColor="#141d3b" fgColor={colors.ink} level="M" size={112} value={inviteUrl} title="QR code to join this room" /></GlassCard>
+        <GlassCard className="players-card"><div className="card-top"><div><span className="label">PLAYERS</span><h2>{players.length}<small> / 50</small></h2></div><Badge>You: {name}</Badge></div><ul className="player-list">{players.map((player, index) => <li className="player-row" key={`${player.name}-${index}`}><Avatar name={player.name} /><span>{player.name}</span>{index === 0 && <span className="host-label">HOST</span>}<span className={player.connected ? "online-dot" : "offline-dot"} /> </li>)}</ul>{error && <p className="error" role="alert">{error}</p>}{isHost ? <Button disabled={players.length < 1} onClick={onStart} type="button">Start game <span>→</span></Button> : <p className="waiting-message"><span className="pulse-dot" /> Waiting for the host to start…</p>}</GlassCard>
       </div>
     </section>
   );
 }
 
 function Question({ question, seconds, answered, answer }) {
-  const progress = Math.max(0, Math.min(100, (seconds / (question.timeLimitMs / 1000)) * 100));
-  return <section className="game-panel"><div className="question-meta"><span>QUESTION {question.questionNumber} <b>/ {question.totalQuestions}</b></span><span className="topic-chip">{question.topic || "Aptitude"}</span></div><div className="countdown-row"><strong>{seconds}s</strong><div className="countdown-track"><div style={{ width: `${progress}%` }} /></div><span>Time left</span></div><h1 className="question-title">{question.text}</h1><div className="options-grid">{question.options.map((option, index) => <button aria-label={`Option ${String.fromCharCode(65 + index)}: ${option}`} className={`option-button option-${index}`} disabled={answered || seconds === 0} key={`${option}-${index}`} onClick={() => answer(index)} type="button"><span className="option-key">{String.fromCharCode(65 + index)}</span><span>{option}</span></button>)}</div>{answered && <div className="answer-confirmation" role="status">Answer locked in. Nice work.</div>}</section>;
+  return <section className="game-panel"><div className="question-meta"><span>QUESTION {question.questionNumber} <b>/ {question.totalQuestions}</b></span><Badge>{question.topic || "Aptitude"}</Badge></div><div className="countdown-row"><strong>{seconds}s</strong><TimerBar max={question.timeLimitMs / 1000} value={seconds} /><span>Time left</span></div><h1 className="question-title">{question.text}</h1><div className="options-grid">{question.options.map((option, index) => <button aria-label={`Option ${String.fromCharCode(65 + index)}: ${option}`} className={`option-button option-${index}`} disabled={answered || seconds === 0} key={`${option}-${index}`} onClick={() => answer(index)} type="button"><span className="option-key">{String.fromCharCode(65 + index)}</span><span>{option}</span></button>)}</div>{answered && <div className="answer-confirmation" role="status">✓ Answer locked in. Nice work.</div>}</section>;
 }
 
 function Reveal({ reveal }) {
