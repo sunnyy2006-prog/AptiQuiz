@@ -60,4 +60,11 @@ client stores it in `localStorage` and sends it on subsequent joins. A
 reconnecting player keeps their score and player identity; if a question is
 active, the server sends the player-specific shuffled options and
 `remainingMs`. New players cannot join after the game starts, duplicate names
-are rejected, and finished rooms are closed to all joins.
+are rejected, and finished rooms are closed to all joins. Session tokens are
+kept out of room state, leaderboard, and question payloads.
+
+Socket events use strict Zod payload validation and per-socket rate limits.
+Only the host session can start or skip an active question. Answer submissions
+are checked against the active socket/session, current shuffled option mapping,
+deadline, and duplicate-answer state. Correct answers are included only in
+`question:reveal`, never in `question:start` or room state events.

@@ -1,5 +1,6 @@
 import { GameRoom, GAME_STATES } from "./gameEngine.js";
 import { randomBytes } from "node:crypto";
+import { createEventHandler, SocketRateLimiter } from "./socketValidation.js";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -10,8 +11,11 @@ export function registerGameSockets(io, database, options = {}) {
   const leaderboardDurationMs = options.leaderboardDurationMs ?? (Number(process.env.LEADERBOARD_DURATION_MS) || 3000);
 
   io.on("connection", (socket) => {
-    socket.on("room:create", (payload = {}) => {
-      try {
+    const limiter = new SocketRateLimiter({ windowMs: 1000, maxEvents: 30 });
+    const answerLimiter = new SocketRateLimiter({ windowMs: 1000, maxEvents: 10 });
+
+    socket.on("room:create", createEventHandler(socket, "room:create", (payload) => {
+        if (socket.data.roomCode) throw new Error("Leave your current room before creating another.");
         const name = normalizeName(payload.playerName);
         const questions = loadQuestions(database, payload.questionSetId);
         const code = createRoomCode(rooms);
@@ -35,18 +39,17 @@ export function registerGameSockets(io, database, options = {}) {
         socket.data.playerId = sessionToken;
         persistRoom(database, room, payload.collegeId, payload.questionSetId);
         persistPlayer(database, room, sessionToken, socket.id);
-        socket.emit("room:created", { code, sessionToken, playerId: sessionToken, isHost: true });
+        socket.emit("room:created", { code, sessionToken, isHost: true });
         broadcastRoom(io, room);
-      } catch (error) {
-        socket.emit("room:error", { message: error.message });
-      }
-    });
+    }, limiter));
 
-    socket.on("room:join", (payload = {}) => {
-      try {
-        const code = String(payload.code ?? payload.roomId ?? "").trim().toUpperCase();
+    socket.on("room:join", createEventHandler(socket, "room:join", (payload) => {
+        const code = payload.code;
         const room = rooms.get(code);
         if (!room) throw new Error("Room not found.");
+        if (socket.data.roomCode && socket.data.roomCode !== code) {
+          throw new Error("Leave your current room before joining another.");
+        }
         const sessionToken = String(payload.sessionToken || "").trim();
         let playerId = sessionToken;
         let isReconnect = false;
@@ -72,36 +75,40 @@ export function registerGameSockets(io, database, options = {}) {
         socket.data.roomCode = code;
         socket.data.playerId = playerId;
         persistPlayer(database, room, playerId, socket.id);
-        socket.emit("room:joined", { code, sessionToken: playerId, playerId, isHost: room.hostId === playerId, reconnected: isReconnect });
+        socket.emit("room:joined", { code, sessionToken: playerId, isHost: room.hostId === playerId, reconnected: isReconnect });
         if (isReconnect) {
-          sendRoomState(io, socket, room);
-          sendPlayerView(io, socket, room, playerId);
+          const players = getLeaderboard(room);
+          sendRoomState(io, socket, room, players);
+          sendPlayerView(io, socket, room, playerId, players);
         } else {
           broadcastRoom(io, room);
         }
-      } catch (error) {
-        socket.emit("room:error", { message: error.message });
-      }
-    });
+    }, limiter));
 
-    socket.on("game:start", () => {
+    socket.on("game:start", createEventHandler(socket, "game:start", () => {
       const room = rooms.get(socket.data.roomCode);
       if (!room) return socket.emit("room:error", { message: "Join a room first." });
-      try {
-        room.start(socket.data.playerId);
-        setRoomStatus(database, room.code, "active");
-      } catch (error) {
-        socket.emit("room:error", { message: error.message });
-      }
-    });
+      room.start(socket.data.playerId);
+      setRoomStatus(database, room.code, "active");
+    }, limiter));
 
-    socket.on("game:answer", ({ optionIndex } = {}) => {
+    socket.on("game:skip", createEventHandler(socket, "game:skip", () => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) return socket.emit("room:error", { message: "Join a room first." });
+      room.skip(socket.data.playerId);
+    }, limiter));
+
+    socket.on("game:answer", createEventHandler(socket, "game:answer", ({ optionIndex }) => {
       const room = rooms.get(socket.data.roomCode);
       if (!room) return socket.emit("game:answer-result", { accepted: false, reason: "Join a room first." });
+      const player = room.players.get(socket.data.playerId);
+      if (!player || !player.connected || player.socketId !== socket.id) {
+        return socket.emit("game:answer-result", { accepted: false, reason: "You are not an active player in this room." });
+      }
       const result = room.answer(socket.data.playerId, optionIndex);
       socket.emit("game:answer-result", result);
       if (result.accepted) persistAnswer(database, room, socket.data.playerId);
-    });
+    }, answerLimiter));
 
     socket.on("disconnect", () => {
       const code = socket.data.roomCode;
@@ -185,8 +192,8 @@ function persistAnswer(database, room, playerId) {
 }
 
 function broadcastRoom(io, room) {
-  sendRoomState(io, null, room);
   const players = getLeaderboard(room);
+  sendRoomState(io, null, room, players);
   if (room.state === GAME_STATES.QUESTION) {
     for (const [playerId] of room.players) sendPlayerView(io, null, room, playerId);
   } else if (room.state === GAME_STATES.REVEAL) {
@@ -196,14 +203,13 @@ function broadcastRoom(io, room) {
   }
 }
 
-function sendRoomState(io, socket, room) {
+function sendRoomState(io, socket, room, players = getLeaderboard(room)) {
   const target = socket || io.to(room.code);
-  const players = getLeaderboard(room);
   target.emit("room:state", {
     code: room.code,
     state: room.state,
-    hostId: room.hostId,
-    players: players.map(({ id, name, score, connected }) => ({ id, name, score, connected })),
+    hostName: room.players.get(room.hostId)?.name,
+    players: players.map(({ name, score, connected }) => ({ name, score, connected })),
     questionNumber: room.questionIndex + 1,
     totalQuestions: room.questions.length
   });
@@ -215,34 +221,34 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
   const target = socket || io.to(player.socketId);
   if (room.state === GAME_STATES.QUESTION) {
     const mapping = room.currentQuestion.mappings.get(playerId);
-    room.markQuestionEmitted(playerId);
+    if (player.questionEmittedAt === null) room.markQuestionEmitted(playerId);
     target.emit("question:start", {
-        questionId: room.currentQuestion.id,
-        text: room.currentQuestion.text,
-        options: mapping.map((index) => room.currentQuestion.options[index]),
-        imageUrl: room.currentQuestion.imageUrl,
-        tableJson: room.currentQuestion.tableJson,
-        timeLimitMs: room.options.timeLimitMs,
-        remainingMs: Math.max(0, room.roundStartedAt + room.options.timeLimitMs - room.now()),
-        questionNumber: room.questionIndex + 1,
-        totalQuestions: room.questions.length
+      questionId: room.currentQuestion.id,
+      text: room.currentQuestion.text,
+      options: mapping.map((index) => room.currentQuestion.options[index]),
+      imageUrl: room.currentQuestion.imageUrl,
+      tableJson: room.currentQuestion.tableJson,
+      timeLimitMs: room.options.timeLimitMs,
+      remainingMs: Math.max(0, room.roundStartedAt + room.options.timeLimitMs - room.now()),
+      questionNumber: room.questionIndex + 1,
+      totalQuestions: room.questions.length
     });
   } else if (room.state === GAME_STATES.REVEAL) {
     const mapping = room.currentQuestion.mappings.get(playerId);
-      const correctShuffledIndex = mapping.indexOf(room.currentQuestion.correctIndex);
+    const correctShuffledIndex = mapping.indexOf(room.currentQuestion.correctIndex);
     target.emit("question:reveal", {
-        questionId: room.currentQuestion.id,
-        text: room.currentQuestion.text,
-        options: mapping.map((index) => room.currentQuestion.options[index]),
-        correctIndex: room.currentQuestion.correctIndex,
-        correctOption: room.currentQuestion.options[room.currentQuestion.correctIndex],
-        correctShuffledIndex,
-        answer: player.answer ? {
-          selectedIndex: player.answer.shuffledIndex,
-          isCorrect: player.answer.isCorrect,
-          points: player.answer.points
-        } : null,
-        leaderboard: players
+      questionId: room.currentQuestion.id,
+      text: room.currentQuestion.text,
+      options: mapping.map((index) => room.currentQuestion.options[index]),
+      correctIndex: room.currentQuestion.correctIndex,
+      correctOption: room.currentQuestion.options[room.currentQuestion.correctIndex],
+      correctShuffledIndex,
+      answer: player.answer ? {
+        selectedIndex: player.answer.shuffledIndex,
+        isCorrect: player.answer.isCorrect,
+        points: player.answer.points
+      } : null,
+      leaderboard: players
     });
   } else if (room.state === GAME_STATES.LEADERBOARD || room.state === GAME_STATES.FINISHED) {
     target.emit("game:leaderboard", { leaderboard: players });
@@ -255,6 +261,6 @@ function getLeaderboard(room) {
     const rank = index + 1;
     const change = player.previousRank === null ? "new" : rank < player.previousRank ? "climbed" : rank > player.previousRank ? "dropped" : "same";
     player.previousRank = rank;
-    return { id: player.id, name: player.name, score: player.score, rank, rankChange: change, connected: player.connected };
+    return { name: player.name, score: player.score, rank, rankChange: change, connected: player.connected };
   });
 }

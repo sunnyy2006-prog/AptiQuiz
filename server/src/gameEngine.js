@@ -67,12 +67,19 @@ export class GameRoom {
     this.startQuestion();
   }
 
+  skip(requesterId) {
+    if (requesterId !== this.hostId) throw new Error("Only the host can skip a question.");
+    if (this.state !== GAME_STATES.QUESTION) throw new Error("There is no active question to skip.");
+    this.endQuestion();
+  }
+
   answer(playerId, shuffledIndex) {
     if (this.state !== GAME_STATES.QUESTION || !this.currentQuestion) {
       return { accepted: false, reason: "The question is not active." };
     }
     const player = this.players.get(playerId);
-    if (!player || player.answer) return { accepted: false, reason: "An answer has already been submitted." };
+    if (!player || !player.connected) return { accepted: false, reason: "You are not an active player in this room." };
+    if (player.answer) return { accepted: false, reason: "An answer has already been submitted." };
     if (!Number.isInteger(shuffledIndex) || shuffledIndex < 0 || shuffledIndex >= this.currentQuestion.options.length) {
       return { accepted: false, reason: "Invalid option." };
     }

@@ -100,7 +100,7 @@ export default function App() {
             <p className="mt-6 font-medium">{players.length} / 50 players</p>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {players.map((player) => (
-                <li className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300" key={player.id}>
+                <li className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300" key={player.name}>
                   {player.name}
                 </li>
               ))}
