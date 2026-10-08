@@ -11,6 +11,16 @@ import questionSetRoutes, { validationErrorHandler } from "./routes.js";
 import { registerGameSockets } from "./socketGame.js";
 import leagueRoutes, { leagueValidationErrorHandler } from "./leagueRoutes.js";
 import practiceRoutes from "./practiceRoutes.js";
+import { seedDatabase } from "./seed.js";
+
+if (process.env.DISABLE_AUTOSEED !== "true") {
+  try {
+    const seeded = seedDatabase();
+    console.log(`Database ready: ${seeded} questions available.`);
+  } catch (error) {
+    console.error("Auto-seed failed:", error.message);
+  }
+}
 
 const app = express();
 const httpServer = createServer(app);

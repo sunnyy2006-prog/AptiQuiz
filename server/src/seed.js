@@ -44,29 +44,33 @@ const questions = [
   ["A factory produced 500, 600 and 750 units over three days. What was the average production?", ["600", "616.67", "625", "650"], 1, "data interpretation", "medium"]
 ];
 
-const seed = database.transaction(() => {
-  const college = database.prepare("INSERT OR IGNORE INTO colleges (name) VALUES (?)").run("AptiQuiz Sample College");
-  const collegeId = college.lastInsertRowid || database.prepare("SELECT id FROM colleges WHERE name = ?").get("AptiQuiz Sample College").id;
-  const setIds = new Map();
-  for (const topic of ["quantitative", "logical", "verbal", "data interpretation"]) {
-    const name = `${topic[0].toUpperCase()}${topic.slice(1)} Aptitude`;
-    const result = database.prepare(`
-      INSERT OR IGNORE INTO question_sets (name, description, college_id)
-      VALUES (?, ?, ?)
-    `).run(name, `Sample ${topic} questions`, collegeId);
-    setIds.set(topic, result.lastInsertRowid || database.prepare("SELECT id FROM question_sets WHERE name = ?").get(name).id);
-  }
-  const count = database.prepare("SELECT COUNT(*) AS count FROM questions").get().count;
-  if (count > 0) return count;
-  const insert = database.prepare(`
-    INSERT INTO questions
-      (question_set_id, text, options, correct_index, topic, difficulty, order_index)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  questions.forEach(([text, options, correctIndex, topic, difficulty], index) => {
-    insert.run(setIds.get(topic), text, JSON.stringify(options), correctIndex, topic, difficulty, index);
-  });
-  return questions.length;
-});
+export function seedDatabase() {
+  return database.transaction(() => {
+    const college = database.prepare("INSERT OR IGNORE INTO colleges (name) VALUES (?)").run("AptiQuiz Sample College");
+    const collegeId = college.lastInsertRowid || database.prepare("SELECT id FROM colleges WHERE name = ?").get("AptiQuiz Sample College").id;
+    const setIds = new Map();
+    for (const topic of ["quantitative", "logical", "verbal", "data interpretation"]) {
+      const name = `${topic[0].toUpperCase()}${topic.slice(1)} Aptitude`;
+      const result = database.prepare(`
+        INSERT OR IGNORE INTO question_sets (name, description, college_id)
+        VALUES (?, ?, ?)
+      `).run(name, `Sample ${topic} questions`, collegeId);
+      setIds.set(topic, result.lastInsertRowid || database.prepare("SELECT id FROM question_sets WHERE name = ?").get(name).id);
+    }
+    const count = database.prepare("SELECT COUNT(*) AS count FROM questions").get().count;
+    if (count > 0) return count;
+    const insert = database.prepare(`
+      INSERT INTO questions
+        (question_set_id, text, options, correct_index, topic, difficulty, order_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    questions.forEach(([text, options, correctIndex, topic, difficulty], index) => {
+      insert.run(setIds.get(topic), text, JSON.stringify(options), correctIndex, topic, difficulty, index);
+    });
+    return questions.length;
+  })();
+}
 
-console.log(`Seed complete: ${seed()} questions available.`);
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+  console.log(`Seed complete: ${seedDatabase()} questions available.`);
+}
