@@ -28,7 +28,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .page { padding: 42px 20px 80px; }
 .hero-grid { align-items: center; display: grid; gap: 56px; grid-template-columns: minmax(0, 1fr) minmax(320px, 410px); min-height: calc(100vh - 150px); }
 .landing-hero { grid-template-columns: minmax(0, 1.1fr) minmax(320px, 410px); position: relative; }
-.landing-visual { height: min(60vw, 650px); left: 34%; pointer-events: none; position: absolute; top: 50%; transform: translate(-50%, -50%); width: min(60vw, 650px); z-index: -1; }
+.landing-visual { height: min(60vw, 650px); left: 34%; pointer-events: none; position: absolute; top: 50%; transform: translate(-50%, -50%); width: min(60vw, 650px); z-index: 0; }
+.hero-copy, .landing-form { position: relative; z-index: 1; }
 .landing-scene, .landing-scene canvas { height: 100% !important; width: 100% !important; }
 .scene-glow, .scene-fallback { background: radial-gradient(circle, rgba(50,214,255,.16), rgba(155,124,255,.08) 35%, transparent 68%); border-radius: 50%; inset: 8%; position: absolute; }
 .scene-fallback { background: radial-gradient(circle at 50% 42%, rgba(50,214,255,.2), rgba(155,124,255,.12) 35%, transparent 68%); }
