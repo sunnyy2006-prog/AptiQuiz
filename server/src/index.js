@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import database from "./db.js";
+import questionSetRoutes, { validationErrorHandler } from "./routes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -22,11 +23,18 @@ app.get("/api/health", (_request, response) => {
 
 app.get("/api/questions", (_request, response) => {
   const questions = database
-    .prepare("SELECT id, prompt, options FROM questions ORDER BY id")
+    .prepare("SELECT * FROM questions ORDER BY question_set_id, order_index, id")
     .all()
-    .map((question) => ({ ...question, options: JSON.parse(question.options) }));
+    .map((question) => ({
+      ...question,
+      options: JSON.parse(question.options),
+      table_json: question.table_json === null ? null : JSON.parse(question.table_json)
+    }));
   response.json({ questions });
 });
+
+app.use("/api/question-sets", questionSetRoutes);
+app.use(validationErrorHandler);
 
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));

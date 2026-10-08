@@ -12,14 +12,88 @@ fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 
 const database = new Database(databasePath);
 database.pragma("journal_mode = WAL");
+
+const questionColumns = database
+  .prepare("PRAGMA table_info(questions)")
+  .all()
+  .map((column) => column.name);
+if (questionColumns.length > 0 && !questionColumns.includes("question_set_id")) {
+  database.exec("ALTER TABLE questions RENAME TO questions_legacy");
+}
+
 database.exec(`
-  CREATE TABLE IF NOT EXISTS questions (
+  PRAGMA foreign_keys = ON;
+
+  CREATE TABLE IF NOT EXISTS colleges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    prompt TEXT NOT NULL,
-    options TEXT NOT NULL,
-    answer INTEGER NOT NULL,
+    name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS question_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    college_id INTEGER REFERENCES colleges(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_set_id INTEGER NOT NULL REFERENCES question_sets(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    options TEXT NOT NULL,
+    correct_index INTEGER NOT NULL CHECK (correct_index >= 0),
+    topic TEXT NOT NULL,
+    difficulty TEXT NOT NULL CHECK (difficulty IN ('easy', 'medium', 'hard')),
+    image_url TEXT,
+    table_json TEXT,
+    order_index INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS rooms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    college_id INTEGER REFERENCES colleges(id) ON DELETE SET NULL,
+    question_set_id INTEGER REFERENCES question_sets(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'completed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    socket_id TEXT,
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS answers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+    selected_index INTEGER,
+    is_correct INTEGER NOT NULL DEFAULT 0 CHECK (is_correct IN (0, 1)),
+    answered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(player_id, question_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS league_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    points INTEGER NOT NULL DEFAULT 0,
+    games_played INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(player_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_questions_set_order
+    ON questions(question_set_id, order_index);
+  CREATE INDEX IF NOT EXISTS idx_players_room
+    ON players(room_id);
 `);
 
 export default database;

@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/db.js"
+    "seed": "node src/seed.js",
+    "check": "node --check src/index.js && node --check src/db.js && node --check src/routes.js && node --check src/seed.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "zod": "^3.24.1"
   }
 }
