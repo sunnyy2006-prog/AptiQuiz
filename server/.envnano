@@ -1,0 +1,14 @@
+cd "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server"
+touch .env
+open -e .encd "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server"
+touch .env
+open -e .env
+
+cd "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server"
+touch .env
+open -e .env
+
+open -e "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server/.env"
+nano "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server/.env"
+nano "/Users/sudhanshutomar/Desktop/apti quiz/AptiQuiz/.git/AptiQuiz/server/.env"
+

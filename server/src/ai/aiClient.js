@@ -17,5 +17,10 @@ export async function generateText({ system, user, maxTokens = 700 }) {
     setTimeout(() => reject(new Error("AI request timed out.")), timeoutMs);
   });
   const response = await Promise.race([generation, timeout]);
-  return response.text || "";
+  if (typeof response.text === "string" && response.text) return response.text;
+  return (response.candidates || [])
+    .flatMap((candidate) => candidate.content?.parts || [])
+    .filter((part) => typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n");
 }
