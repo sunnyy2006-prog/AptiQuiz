@@ -7,14 +7,16 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "seed": "node src/seed.js",
+    "loadtest": "node scripts/loadtest.js",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/db.js && node --check src/routes.js && node --check src/seed.js && node --check src/scoring.js && node --check src/gameEngine.js && node --check src/socketGame.js && node --check src/socketValidation.js"
+    "check": "node --check src/index.js && node --check src/db.js && node --check src/routes.js && node --check src/seed.js && node --check src/scoring.js && node --check src/gameEngine.js && node --check src/socketGame.js && node --check src/socketValidation.js && node --check scripts/loadtest.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
     "zod": "^3.24.1"
   }
 }

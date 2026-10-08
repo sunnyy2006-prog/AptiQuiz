@@ -80,6 +80,39 @@ league score entry per player. The REST league API supports:
 The client exposes the same filters from **View league**, with player and
 college standings for today, this week, or all time.
 
+## Load testing
+
+`server/scripts/loadtest.js` simulates 50 players in one room. It measures
+join success rate, answer acknowledgement latency (average and p95), errors,
+and validates that the final leaderboard contains all 50 unique players with
+sequential ranks and descending scores. Five players disconnect during the
+first question and reconnect with their session tokens.
+
+Install dependencies and seed questions first:
+
+```bash
+npm install
+npm run seed --workspace server
+```
+
+Run against a local server in another terminal. Shorter timers make the test
+finish faster:
+
+```bash
+QUESTION_TIME_LIMIT_MS=1000 REVEAL_DURATION_MS=200 LEADERBOARD_DURATION_MS=200 npm start
+npm run loadtest --workspace server -- --url http://localhost:3001 --answer-window-ms 700
+```
+
+For a deployed server, pass its public Socket.IO URL:
+
+```bash
+npm run loadtest --workspace server -- --url https://quiz.example.com --answer-window-ms 5000
+```
+
+Optional flags are `--reconnect-delay-ms`, `--timeout-ms`, and
+`--answer-window-ms`. The script exits with a non-zero status if all joins do
+not succeed or the final leaderboard is inconsistent.
+
 ## Host results dashboard
 
 After a game finishes, the host can open **Open host dashboard** from the
