@@ -13,14 +13,22 @@ import leagueRoutes, { leagueValidationErrorHandler } from "./leagueRoutes.js";
 const app = express();
 const httpServer = createServer(app);
 const port = Number(process.env.PORT) || 3001;
-const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const allowedOrigins = (process.env.CLIENT_ORIGIN || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(currentDirectory, "../../client/dist");
 
 app.use(express.json());
 
 app.get("/api/health", (_request, response) => {
-  response.json({ status: "ok", service: "aptiquiz-server" });
+  try {
+    database.prepare("SELECT 1").get();
+    response.json({ status: "ok", service: "aptiquiz-server" });
+  } catch {
+    response.status(503).json({ status: "error", service: "aptiquiz-server" });
+  }
 });
 
 app.get("/api/questions", (_request, response) => {
@@ -49,7 +57,7 @@ if (fs.existsSync(clientDist)) {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: clientOrigin,
+    origin: allowedOrigins,
     methods: ["GET", "POST"]
   }
 });

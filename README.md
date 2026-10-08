@@ -41,6 +41,60 @@ npm start
 The server serves the built client from `client/dist`, so the resulting
 deployment can run as a single Node.js service.
 
+## Deploy on Render
+
+This repository includes [`render.yaml`](./render.yaml) for a single Render
+Web Service. It builds the client and starts the server from the repository
+root:
+
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+- Health check: `GET /api/health`
+- SQLite path: `/var/data/aptiquiz.db`
+
+### Render dashboard setup
+
+1. Push the repository to GitHub and open the Render dashboard.
+2. Select **New +** → **Web Service**, then connect
+   `sunnyy2006-prog/AptiQuiz`.
+3. Choose the `main` branch and set **Root Directory** to the repository root
+   (leave it blank if Render already shows the root).
+4. Set **Runtime** to **Node**.
+5. Set **Build Command** to `npm install && npm run build`.
+6. Set **Start Command** to `npm start`.
+7. Set **Health Check Path** to `/api/health`.
+8. Add these environment variables under **Environment**:
+   - `NODE_ENV` = `production`
+   - `DATABASE_PATH` = `/var/data/aptiquiz.db`
+   - `CLIENT_ORIGIN` = the deployed app URL, for example
+     `https://aptiquiz.onrender.com`
+   - Do not set `PORT`; Render supplies it automatically.
+9. Under **Disks**, click **Add Disk**, use mount path `/var/data`, and choose
+   a size such as `1 GB`. The disk is required because SQLite data stored on
+   the service filesystem is lost on redeploys/restarts without persistent
+   storage.
+10. Choose the instance size, click **Create Web Service**, and wait for the
+    first deploy to finish.
+11. Open `https://<your-service>.onrender.com/api/health`; it should return
+    `{"status":"ok","service":"aptiquiz-server"}`.
+12. Open the service URL in a browser and test room creation and a second
+    browser joining. Socket.IO, API requests, and the built React client all
+    use the same web service URL.
+
+Instead of entering the settings manually, Render can use **New +** →
+**Blueprint** and the committed `render.yaml`. If you use the Blueprint,
+still set the `CLIENT_ORIGIN` value to the final Render URL when prompted.
+
+### SQLite persistence and scaling
+
+The persistent disk keeps `DATABASE_PATH=/var/data/aptiquiz.db` across
+deploys and restarts. Without a disk, the app is suitable only for temporary
+testing and league/game history can be lost. Render persistent disks are
+attached to one service instance, so keep this app at one instance for the
+in-memory Socket.IO room engine and SQLite database. Moving to multiple
+instances requires shared database storage and Socket.IO adapter/session
+coordination; SQLite on a local disk is not suitable for that setup.
+
 ## Multiplayer game events
 
 The Socket.IO server is authoritative for room state, option shuffling,
