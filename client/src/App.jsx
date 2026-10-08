@@ -252,18 +252,18 @@ export default function App() {
     } else {
       socket.emit("room:join", { code: code.toUpperCase(), playerName: name, sessionToken: localStorage.getItem(STORAGE.code) === code.toUpperCase() ? sessionToken : undefined });
     }
+  }
 
-    async function openProfile() {
-      setError("");
-      try {
-        const response = await fetch(`/api/profile/${sessionToken}`);
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Could not load profile.");
-        setProfile(data);
-        setScreen("profile");
-      } catch (profileError) {
-        setError(profileError.message);
-      }
+  async function openProfile() {
+    setError("");
+    try {
+      const response = await fetch(`/api/profile/${sessionToken}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load profile.");
+      setProfile(data);
+      setScreen("profile");
+    } catch (profileError) {
+      setError(profileError.message);
     }
   }
 
