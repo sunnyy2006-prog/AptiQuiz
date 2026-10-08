@@ -299,7 +299,7 @@ export default function App() {
           {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} playerName={name} />}
           {screen === "results" && <Results leaderboard={leaderboard} playerName={name} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} isHost={isHost} onDashboard={() => socket.emit("host:results")} onHome={() => window.location.reload()} />}
           {screen === "host-results" && <HostResults data={hostResults} onHome={() => window.location.reload()} />}
-          {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} loading={leagueLoading} error={error} onHome={() => setScreen("home")} />}
+          {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} loading={leagueLoading} error={error} playerName={name} onHome={() => setScreen("home")} />}
           {screen === "profile" && <Profile data={profile} onHome={() => setScreen("home")} />}
         </ScreenTransition>
       </main>
@@ -727,12 +727,69 @@ function ShareCardButton({ player, accuracy, averageSpeed, bestTopic, badges }) 
 
 function Profile({ data, onHome }) {
   if (!data) return <section className="results-panel"><p className="error">Profile is not available yet.</p><button className="secondary-button" onClick={onHome} type="button">Back to home</button></section>;
-  return <section className="profile-panel"><div className="section-heading"><div><div className="eyebrow">Player profile</div><h1>{data.name}</h1><p>{data.college}</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div><GlassCard className="profile-card"><div className="metrics"><div><strong>{data.totalGames}</strong><span>Total games</span></div><div><strong>{data.accuracy}%</strong><span>Accuracy</span></div><div><strong>{data.bestTopic || "—"}</strong><span>Best topic</span></div></div><h2>Badges</h2>{data.badges.length ? <div className="badge-list">{data.badges.map((badge) => <Badge tone="lime" key={badge}>✦ {badge}</Badge>)}</div> : <p className="empty-state">Play more games to earn badges.</p>}</GlassCard></section>;
+  const topics = data.topics || [];
+  const strongest = topics[0];
+  const weakest = topics.length > 1 ? topics[topics.length - 1] : null;
+  const ranked = data.globalRank != null;
+  return <section className="profile-panel">
+    <div className="section-heading"><div><div className="eyebrow">Player profile</div><h1>{data.name}</h1><p>{data.college}</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div>
+    <div className="profile-tier"><Badge tone="violet">🏅 {data.tier} tier</Badge>{ranked && <span className="tier-note">Top {Math.max(1, Math.round((data.globalRank / (data.totalPlayers || 1)) * 100))}% of {data.totalPlayers} players</span>}</div>
+    <div className="rank-cards">
+      <GlassCard className="rank-card"><span className="rank-label">Global rank</span><strong>{ranked ? `#${data.globalRank}` : "—"}</strong><span className="rank-sub">{ranked ? `of ${data.totalPlayers} players` : "Play a live game to get ranked"}</span></GlassCard>
+      <GlassCard className="rank-card"><span className="rank-label">College rank</span><strong>{data.collegeRank != null ? `#${data.collegeRank}` : "—"}</strong><span className="rank-sub">{data.collegeRank != null ? `of ${data.collegePlayers} in ${data.college}` : "No college ranking yet"}</span></GlassCard>
+    </div>
+    <GlassCard className="profile-card">
+      <div className="metrics">
+        <div><strong>{data.points ?? 0}</strong><span>Total points</span></div>
+        <div><strong>{data.totalGames}</strong><span>Games</span></div>
+        <div><strong>{data.accuracy}%</strong><span>Accuracy</span></div>
+        <div><strong>{data.averageTime ? `${data.averageTime}s` : "—"}</strong><span>Avg. speed</span></div>
+      </div>
+      <h2>Performance analysis</h2>
+      {topics.length ? <div className="topic-analysis">
+        {topics.map((topic) => <div className="topic-row" key={topic.topic}><span className="topic-name">{topic.topic}</span><div className="topic-bar" role="img" aria-label={`${topic.topic} accuracy ${topic.accuracy}%`}><i style={{ width: `${Math.max(4, Math.min(100, topic.accuracy))}%` }} /></div><b>{topic.accuracy}%</b></div>)}
+      </div> : <p className="empty-state">Answer questions in a live game to unlock your topic analysis.</p>}
+      <div className="analysis-summary">
+        {strongest && <p><b>Strongest:</b> {strongest.topic} at {strongest.accuracy}% — keep leaning on this.</p>}
+        {weakest && <p><b>Needs work:</b> {weakest.topic} at {weakest.accuracy}% — practise a few extra here.</p>}
+      </div>
+      <h2>Badges</h2>
+      {data.badges.length ? <div className="badge-list">{data.badges.map((badge) => <Badge tone="lime" key={badge}>✦ {badge}</Badge>)}</div> : <p className="empty-state">Play more games to earn badges.</p>}
+    </GlassCard>
+  </section>;
 }
 
 function HostResults({ data, onHome }) {
   const [uploadStatus, setUploadStatus] = useState("");
+  const [aiTopic, setAiTopic] = useState("");
+  const [aiDifficulty, setAiDifficulty] = useState("mixed");
+  const [aiCount, setAiCount] = useState(5);
+  const [aiBusy, setAiBusy] = useState(false);
   if (!data) return <section className="results-panel"><p className="error">Results are not available.</p></section>;
+  const generateWithAi = async (event) => {
+    event.preventDefault();
+    if (!data.questionSetId || !aiTopic.trim() || aiBusy) return;
+    setAiBusy(true);
+    setUploadStatus(`Generating ${aiCount} "${aiTopic.trim()}" questions with AI…`);
+    try {
+      const response = await fetch(`/api/question-sets/${data.questionSetId}/questions/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: aiTopic.trim(),
+          count: aiCount,
+          ...(aiDifficulty === "mixed" ? {} : { difficulty: aiDifficulty })
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "AI generation failed.");
+      setUploadStatus(`${result.generated} AI questions added to "${aiTopic.trim()}". New games will use them.`);
+    } catch (generateError) {
+      setUploadStatus(generateError.message);
+    } finally {
+      setAiBusy(false);
+    }
+  };
   const importCsv = async (event) => {
     const file = event.target.files?.[0];
     if (!file || !data.questionSetId) return;
@@ -774,10 +831,10 @@ function HostResults({ data, onHome }) {
     link.click();
     URL.revokeObjectURL(url);
   };
-  return <section className="host-results-panel"><div className="section-heading"><div><div className="eyebrow">Host dashboard · {data.roomCode}</div><h1>Results, at a glance.</h1><p>See where the room found its edge and where it got stuck.</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div><div className="dashboard-actions"><button className="primary-button" onClick={downloadCsv} type="button">Download all results (CSV)</button>{data.questionSetId && <><button className="secondary-button" onClick={downloadTemplate} type="button">Download question CSV template</button><label className="csv-upload">Upload questions<input accept=".csv,text/csv" onChange={importCsv} type="file" /></label><span className="csv-status" role="status">{uploadStatus}</span></>}</div><div className="dashboard-grid"><div className="chart-card"><span className="label">PER-QUESTION ACCURACY</span><h2>How the room performed</h2><div className="dashboard-table">{data.questions.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.percentageCorrect}%<small>{item.correctCount}/{item.missedCount + item.answerCount} correct</small></strong></div>)}</div></div><div className="chart-card"><span className="label">MOST MISSED</span><h2>Needs another look</h2><div className="dashboard-table">{data.mostMissed.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.missedCount}<small>missed</small></strong></div>)}</div></div><div className="chart-card topic-dashboard"><span className="label">TOPIC ACCURACY</span><h2>Strength by topic</h2><div className="chart-wrap"><ResponsiveContainer height={230} width="100%"><BarChart data={data.topics} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.coral} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div></section>;
+  return <section className="host-results-panel"><div className="section-heading"><div><div className="eyebrow">Host dashboard · {data.roomCode}</div><h1>Results, at a glance.</h1><p>See where the room found its edge and where it got stuck.</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div><div className="dashboard-actions"><button className="primary-button" onClick={downloadCsv} type="button">Download all results (CSV)</button>{data.questionSetId && <><form className="ai-generate" onSubmit={generateWithAi}><label className="ai-field">Topic<input onChange={(event) => setAiTopic(event.target.value)} placeholder="e.g. Profit &amp; Loss" required value={aiTopic} /></label><label className="ai-field">Difficulty<select onChange={(event) => setAiDifficulty(event.target.value)} value={aiDifficulty}><option value="mixed">Mixed</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label><label className="ai-field">Count<input max="10" min="1" onChange={(event) => setAiCount(Math.max(1, Math.min(10, Number(event.target.value) || 1)))} type="number" value={aiCount} /></label><button className="primary-button" disabled={aiBusy || !aiTopic.trim()} type="submit">{aiBusy ? "Generating…" : "Generate with AI"}</button></form><button className="secondary-button" onClick={downloadTemplate} type="button">Download question CSV template</button><label className="csv-upload">Upload questions<input accept=".csv,text/csv" onChange={importCsv} type="file" /></label><span className="csv-status" role="status">{uploadStatus}</span></>}</div><div className="dashboard-grid"><div className="chart-card"><span className="label">PER-QUESTION ACCURACY</span><h2>How the room performed</h2><div className="dashboard-table">{data.questions.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.percentageCorrect}%<small>{item.correctCount}/{item.missedCount + item.answerCount} correct</small></strong></div>)}</div></div><div className="chart-card"><span className="label">MOST MISSED</span><h2>Needs another look</h2><div className="dashboard-table">{data.mostMissed.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.missedCount}<small>missed</small></strong></div>)}</div></div><div className="chart-card topic-dashboard"><span className="label">TOPIC ACCURACY</span><h2>Strength by topic</h2><div className="chart-wrap"><ResponsiveContainer height={230} width="100%"><BarChart data={data.topics} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.coral} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div></section>;
 }
 
-function League({ period, setPeriod, college, setCollege, data, loading, error, onHome }) {
+function League({ period, setPeriod, college, setCollege, data, loading, error, playerName, onHome }) {
   const [colleges, setColleges] = useState([]);
   useEffect(() => {
     fetch("/api/league/colleges").then((response) => response.json()).then(({ colleges: available }) => setColleges(available || []));
@@ -798,7 +855,7 @@ function League({ period, setPeriod, college, setCollege, data, loading, error, 
     {loading && <p className="loading-state" role="status">Loading league standings…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     <div className="league-grid">
-      <div className="league-card"><div className="card-top"><div><span className="label">TOP PLAYERS</span><h2>Sharpest minds</h2></div><span className="trophy">♛</span></div><div className="league-table">{data.players.length ? data.players.map((player, index) => <div className="league-row" key={`${player.name}-${player.college}`}><strong>{index + 1}</strong><span className="avatar">{player.name.charAt(0)}</span><span className="league-name">{player.name}<small>{player.college} · {player.games_played} games</small></span><b>{player.points}<small> pts</small></b></div>) : <p className="empty-state">No scores for this period yet.</p>}</div></div>
+      <div className="league-card"><div className="card-top"><div><span className="label">TOP PLAYERS</span><h2>Sharpest minds</h2></div><span className="trophy">♛</span></div><div className="league-table">{data.players.length ? data.players.map((player, index) => <div className={`league-row ${playerName && player.name === playerName ? "current-player" : ""}`} key={`${player.name}-${player.college}`}><strong>{index + 1}</strong><span className="avatar">{player.name.charAt(0)}</span><span className="league-name">{player.name}{playerName && player.name === playerName && <small className="you-label">YOU</small>}<small>{player.college} · {player.games_played} games</small></span><b>{player.points}<small> pts</small></b></div>) : <p className="empty-state">No scores for this period yet.</p>}</div></div>
       <div className="league-card"><div className="card-top"><div><span className="label">TOP COLLEGES</span><h2>Campus cup</h2></div><span className="trophy">✦</span></div><div className="league-table">{data.colleges.length ? data.colleges.map((item, index) => <div className="league-row" key={item.name}><strong>{index + 1}</strong><span className="college-icon">◎</span><span className="league-name">{item.name}<small>{item.players} players · {item.accuracy}% accuracy</small></span><b>{item.points}<small> pts</small></b></div>) : <p className="empty-state">No college scores yet.</p>}</div></div>
     </div>
   </section>;

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import database from "./db.js";
+import { generateText } from "./ai/aiClient.js";
 
 const router = Router();
 const idSchema = z.coerce.number().int().positive();
@@ -31,6 +32,18 @@ const questionSetSchema = z.object({
 const reorderSchema = z.object({
   questionIds: z.array(z.number().int().positive()).min(1)
 });
+const generateSchema = z.object({
+  topic: z.string().trim().min(1).max(100),
+  difficulty: z.enum(["easy", "medium", "hard"]).optional(),
+  count: z.number().int().min(1).max(10).default(5)
+});
+const generatedQuestionsSchema = z.array(z.object({
+  text: z.string().trim().min(1).max(2000),
+  options: z.array(z.string().trim().min(1).max(500)).length(4),
+  correct_index: z.number().int().min(0).max(3),
+  difficulty: z.enum(["easy", "medium", "hard"]).catch("medium"),
+  explanation: z.string().trim().max(2000).optional()
+})).min(1).max(10);
 
 function parseJson(value) {
   return value === null ? null : JSON.parse(value);
@@ -120,48 +133,94 @@ router.post("/:id/questions", (request, response) => {
     explanation: input.explanation ?? null,
     order_index: orderIndex
   });
+  response.status(201).json({
+    question: serializeQuestion(database.prepare("SELECT * FROM questions WHERE id = ?").get(result.lastInsertRowid))
+  });
+});
 
-  router.post("/:id/questions/csv", (request, response) => {
+router.post("/:id/questions/csv", (request, response) => {
+  const questionSetId = idSchema.parse(request.params.id);
+  if (!getQuestionSet(questionSetId)) return response.status(404).json({ error: "Question set not found." });
+  const rows = parseCsv(String(request.body || ""));
+  const errors = [];
+  const questions = [];
+  rows.forEach((row, index) => {
+    const line = index + 2;
+    const options = [row.option_a, row.option_b, row.option_c, row.option_d].filter(Boolean).map((value) => value.trim());
+    const parsed = questionSchema.safeParse({
+      text: row.text,
+      options,
+      correct_index: Number(row.correct_index),
+      topic: row.topic,
+      difficulty: row.difficulty?.toLowerCase(),
+      image_url: row.image_url || null,
+      explanation: row.explanation || null
+    });
+    if (!parsed.success) {
+      errors.push({ line, messages: parsed.error.issues.map((issue) => `${issue.path.join(".") || "row"}: ${issue.message}`) });
+    } else {
+      questions.push(parsed.data);
+    }
+  });
+  if (errors.length) return response.status(400).json({ error: "CSV validation failed.", errors });
+  if (!questions.length) return response.status(400).json({ error: "CSV must contain at least one question.", errors: [] });
+  const nextOrder = database.prepare("SELECT COALESCE(MAX(order_index) + 1, 0) AS next_order FROM questions WHERE question_set_id = ?").get(questionSetId).next_order;
+  const insert = database.prepare(`
+    INSERT INTO questions
+      (question_set_id, text, options, correct_index, topic, difficulty, image_url, table_json, explanation, order_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+  `);
+  database.transaction(() => questions.forEach((question, index) => insert.run(
+    questionSetId, question.text, JSON.stringify(question.options), question.correct_index,
+    question.topic, question.difficulty, question.image_url ?? null, question.explanation ?? null, nextOrder + index
+  )))();
+  response.status(201).json({ imported: questions.length, errors: [] });
+});
+
+router.post("/:id/questions/generate", async (request, response, next) => {
+  try {
     const questionSetId = idSchema.parse(request.params.id);
     if (!getQuestionSet(questionSetId)) return response.status(404).json({ error: "Question set not found." });
-    const rows = parseCsv(String(request.body || ""));
-    const errors = [];
-    const questions = [];
-    rows.forEach((row, index) => {
-      const line = index + 2;
-      const options = [row.option_a, row.option_b, row.option_c, row.option_d].filter(Boolean).map((value) => value.trim());
-      const parsed = questionSchema.safeParse({
-        text: row.text,
-        options,
-        correct_index: Number(row.correct_index),
-        topic: row.topic,
-        difficulty: row.difficulty?.toLowerCase(),
-        image_url: row.image_url || null,
-        explanation: row.explanation || null
-      });
-      if (!parsed.success) {
-        errors.push({ line, messages: parsed.error.issues.map((issue) => `${issue.path.join(".") || "row"}: ${issue.message}`) });
-      } else {
-        questions.push(parsed.data);
+    const input = generateSchema.parse(request.body);
+    if (!process.env.AI_API_KEY) return response.status(503).json({ error: "AI generation is not configured on this server." });
+    const difficultyClause = input.difficulty
+      ? ` Every question must be "${input.difficulty}" difficulty.`
+      : " Spread the questions across easy, medium and hard difficulty.";
+    const system = "You create fair, self-contained aptitude quiz questions and answer strictly in JSON.";
+    const user = `Generate exactly ${input.count} multiple-choice questions on the topic "${input.topic}".${difficultyClause} Each question must have 4 distinct options and exactly one correct answer. Return a JSON array where each element has: text (string), options (array of exactly 4 strings), correct_index (integer 0-3 marking the correct option), difficulty ("easy" | "medium" | "hard"), and explanation (short string).`;
+    let raw;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        raw = await generateText({ system, user, maxTokens: 3000, json: true });
+        break;
+      } catch (aiError) {
+        if (attempt === 2) return response.status(503).json({ error: "The AI provider is busy right now. Please try again in a moment." });
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
       }
-    });
-    if (errors.length) return response.status(400).json({ error: "CSV validation failed.", errors });
-    if (!questions.length) return response.status(400).json({ error: "CSV must contain at least one question.", errors: [] });
+    }
+    let generated;
+    try {
+      generated = generatedQuestionsSchema.parse(JSON.parse(raw));
+    } catch {
+      return response.status(502).json({ error: "The AI returned an unexpected response. Please try again." });
+    }
     const nextOrder = database.prepare("SELECT COALESCE(MAX(order_index) + 1, 0) AS next_order FROM questions WHERE question_set_id = ?").get(questionSetId).next_order;
     const insert = database.prepare(`
       INSERT INTO questions
         (question_set_id, text, options, correct_index, topic, difficulty, image_url, table_json, explanation, order_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
     `);
-    database.transaction(() => questions.forEach((question, index) => insert.run(
+    const ids = database.transaction(() => generated.map((question, index) => insert.run(
       questionSetId, question.text, JSON.stringify(question.options), question.correct_index,
-      question.topic, question.difficulty, question.image_url ?? null, question.explanation ?? null, nextOrder + index
-    )))();
-    response.status(201).json({ imported: questions.length, errors: [] });
-  });
-  response.status(201).json({
-    question: serializeQuestion(database.prepare("SELECT * FROM questions WHERE id = ?").get(result.lastInsertRowid))
-  });
+      input.topic, question.difficulty, question.explanation ?? null, nextOrder + index
+    ).lastInsertRowid))();
+    const questions = ids
+      .map((id) => serializeQuestion(database.prepare("SELECT * FROM questions WHERE id = ?").get(id)))
+      .filter(Boolean);
+    response.status(201).json({ generated: questions.length, questions });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.patch("/questions/:questionId", (request, response) => {
