@@ -40,3 +40,17 @@ npm start
 
 The server serves the built client from `client/dist`, so the resulting
 deployment can run as a single Node.js service.
+
+## Multiplayer game events
+
+The Socket.IO server is authoritative for room state, option shuffling,
+deadlines, answers, scoring, and leaderboard transitions. Clients can use:
+
+- `room:create` with `{ playerName, questionSetId?, collegeId? }`
+- `room:join` with `{ code, playerName }`
+- `game:start` (host only)
+- `game:answer` with `{ optionIndex }`
+
+The server emits `room:state`, `question:start`, `question:reveal`,
+`game:answer-result`, and `game:leaderboard`. Game states progress through
+`lobby`, `question`, `reveal`, `leaderboard`, and `finished`.

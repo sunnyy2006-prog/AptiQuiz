@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import database from "./db.js";
 import questionSetRoutes, { validationErrorHandler } from "./routes.js";
+import { registerGameSockets } from "./socketGame.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -50,42 +51,7 @@ const io = new Server(httpServer, {
   }
 });
 
-io.on("connection", (socket) => {
-  socket.on("room:join", ({ roomId, playerName } = {}) => {
-    const normalizedRoomId = String(roomId || "").trim().toUpperCase();
-    const normalizedPlayerName = String(playerName || "").trim();
-
-    if (!normalizedRoomId || !normalizedPlayerName) {
-      socket.emit("room:error", { message: "A room code and player name are required." });
-      return;
-    }
-
-    const room = io.sockets.adapter.rooms.get(normalizedRoomId);
-    if (room && room.size >= 50) {
-      socket.emit("room:error", { message: "This room is full." });
-      return;
-    }
-
-    socket.join(normalizedRoomId);
-    socket.data.playerName = normalizedPlayerName;
-    socket.data.roomId = normalizedRoomId;
-    io.to(normalizedRoomId).emit("room:players", getPlayers(normalizedRoomId));
-    socket.emit("room:joined", { roomId: normalizedRoomId, playerName: normalizedPlayerName });
-  });
-
-  socket.on("disconnect", () => {
-    const { roomId } = socket.data;
-    if (roomId) io.to(roomId).emit("room:players", getPlayers(roomId));
-  });
-});
-
-function getPlayers(roomId) {
-  const playerIds = io.sockets.adapter.rooms.get(roomId) || [];
-  return [...playerIds].map((id) => ({
-    id,
-    name: io.sockets.sockets.get(id)?.data.playerName || "Player"
-  }));
-}
+registerGameSockets(io, database);
 
 httpServer.listen(port, () => {
   console.log(`AptiQuiz server listening on port ${port}`);
