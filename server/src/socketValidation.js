@@ -22,6 +22,7 @@ export const eventSchemas = Object.freeze({
   }),
   "game:start": emptyPayload,
   "game:skip": emptyPayload,
+  "host:results": emptyPayload,
   "game:answer": z.object({
     optionIndex: z.number().int().min(0).max(7)
   }).strict()

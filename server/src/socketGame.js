@@ -101,6 +101,14 @@ export function registerGameSockets(io, database, options = {}) {
       room.skip(socket.data.playerId);
     }, limiter));
 
+    socket.on("host:results", createEventHandler(socket, "host:results", () => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) throw new Error("Join a room first.");
+      if (room.hostId !== socket.data.playerId) throw new Error("Only the host can view results.");
+      if (room.state !== GAME_STATES.FINISHED) throw new Error("Results are available after the game finishes.");
+      socket.emit("host:results", buildHostResults(database, room));
+    }, limiter));
+
     socket.on("game:answer", createEventHandler(socket, "game:answer", ({ optionIndex }) => {
       const room = rooms.get(socket.data.roomCode);
       if (!room) return socket.emit("game:answer-result", { accepted: false, reason: "Join a room first." });
@@ -224,6 +232,71 @@ function persistAnswer(database, room, playerId) {
     INSERT OR IGNORE INTO answers (player_id, question_id, selected_index, is_correct)
     VALUES (?, ?, ?, ?)
   `).run(dbPlayer.id, question.id, player.answer.originalIndex, player.answer.isCorrect ? 1 : 0);
+}
+
+function buildHostResults(database, room) {
+  const dbRoom = database.prepare("SELECT id FROM rooms WHERE code = ?").get(room.code);
+  const questions = room.questions.map((question, index) => {
+    const answers = database.prepare(`
+      SELECT COUNT(*) AS answer_count,
+        COALESCE(SUM(is_correct), 0) AS correct_count
+      FROM answers a
+      JOIN players p ON p.id = a.player_id
+      WHERE p.room_id = ? AND a.question_id = ?
+    `).get(dbRoom.id, question.id);
+    const playerCount = database.prepare("SELECT COUNT(*) AS count FROM players WHERE room_id = ?").get(dbRoom.id).count;
+    const missedCount = Math.max(0, playerCount - answers.answer_count);
+    return {
+      questionNumber: index + 1,
+      questionId: question.id,
+      text: question.text,
+      topic: question.topic,
+      correctCount: answers.correct_count,
+      answerCount: answers.answer_count,
+      missedCount,
+      percentageCorrect: playerCount ? Math.round((answers.correct_count / playerCount) * 100) : 0
+    };
+  });
+  const topics = database.prepare(`
+    SELECT q.topic,
+      COUNT(DISTINCT q.id) AS question_count,
+      COUNT(a.id) AS answer_count,
+      COALESCE(SUM(a.is_correct), 0) AS correct_count
+    FROM questions q
+    LEFT JOIN answers a ON a.question_id = q.id
+    LEFT JOIN players p ON p.id = a.player_id AND p.room_id = ?
+    WHERE q.id IN (${room.questions.map(() => "?").join(",")})
+      AND (a.id IS NULL OR p.room_id = ?)
+    GROUP BY q.topic
+    ORDER BY q.topic COLLATE NOCASE
+  `).all(dbRoom.id, ...room.questions.map((question) => question.id), dbRoom.id)
+    .map((topic) => ({
+      topic: topic.topic,
+      correctCount: topic.correct_count,
+      answerCount: topic.answer_count,
+      accuracy: playerCount && topic.question_count
+        ? Math.round((topic.correct_count / (playerCount * topic.question_count)) * 100)
+        : 0
+    }));
+  const players = database.prepare(`
+    SELECT p.name, q.text AS question, q.topic, q.correct_index AS correctIndex,
+      a.selected_index AS selectedIndex,
+      a.is_correct AS isCorrect, a.answered_at AS answeredAt
+    FROM players p
+    CROSS JOIN questions q
+    LEFT JOIN answers a ON a.player_id = p.id AND a.question_id = q.id
+    WHERE p.room_id = ? AND q.id IN (${room.questions.map(() => "?").join(",")})
+    ORDER BY p.name COLLATE NOCASE, q.id
+  `).all(dbRoom.id, ...room.questions.map((question) => question.id))
+    .map((row) => ({ ...row, isCorrect: Boolean(row.isCorrect) }));
+  return {
+    roomCode: room.code,
+    completedAt: new Date().toISOString(),
+    questions,
+    topics,
+    players,
+    mostMissed: [...questions].sort((left, right) => right.missedCount - left.missedCount).slice(0, 5)
+  };
 }
 
 function broadcastRoom(io, room) {

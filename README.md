@@ -79,3 +79,13 @@ league score entry per player. The REST league API supports:
 
 The client exposes the same filters from **View league**, with player and
 college standings for today, this week, or all time.
+
+## Host results dashboard
+
+After a game finishes, the host can open **Open host dashboard** from the
+results screen. The dashboard shows percentage correct per question, the five
+most-missed questions, and topic-level accuracy. **Download all results
+(CSV)** exports one row for every player/question pair, including the selected
+option, correct option, correctness, and answer timestamp. Results are
+requested over a host-authenticated Socket.IO event and are not exposed by a
+public room-code endpoint.

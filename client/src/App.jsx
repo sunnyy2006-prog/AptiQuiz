@@ -36,6 +36,7 @@ export default function App() {
   const [leaguePeriod, setLeaguePeriod] = useState("all");
   const [leagueCollege, setLeagueCollege] = useState("");
   const [leagueData, setLeagueData] = useState({ players: [], colleges: [] });
+  const [hostResults, setHostResults] = useState(null);
 
   useEffect(() => {
     if (screen !== "league") return;
@@ -94,6 +95,10 @@ export default function App() {
         setAnswers((current) => [...current, { ...result, topic: question?.topic }]);
       } else setError(result.reason);
     };
+    const onHostResults = (data) => {
+      setHostResults(data);
+      setScreen("host-results");
+    };
     const onError = ({ message }) => {
       setError(message);
       if (/not found|closed|token is not valid/i.test(message)) {
@@ -116,6 +121,7 @@ export default function App() {
     socket.on("question:reveal", onReveal);
     socket.on("game:leaderboard", onLeaderboard);
     socket.on("game:answer-result", onAnswer);
+    socket.on("host:results", onHostResults);
     socket.on("room:error", onError);
     return () => {
       socket.off("connect", onConnect);
@@ -126,6 +132,7 @@ export default function App() {
       socket.off("question:reveal", onReveal);
       socket.off("game:leaderboard", onLeaderboard);
       socket.off("game:answer-result", onAnswer);
+      socket.off("host:results", onHostResults);
       socket.off("room:error", onError);
     };
   }, [question?.topic, room?.state]);
@@ -180,7 +187,8 @@ export default function App() {
         {screen === "question" && question && <Question question={question} seconds={seconds} answered={answered} answer={answer} />}
         {screen === "reveal" && <Reveal reveal={reveal} />}
         {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} />}
-        {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} onHome={() => window.location.reload()} />}
+        {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} isHost={isHost} onDashboard={() => socket.emit("host:results")} onHome={() => window.location.reload()} />}
+        {screen === "host-results" && <HostResults data={hostResults} onHome={() => window.location.reload()} />}
         {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} error={error} onHome={() => setScreen("home")} />}
       </main>
     </div>
@@ -241,8 +249,28 @@ function Leaderboard({ leaderboard }) {
   return <section className="leaderboard-panel"><div className="section-heading"><div><div className="eyebrow">Current standings</div><h1>Leaderboard</h1><p>Every point changes the game.</p></div><span className="trophy">♛</span></div><div className="leaderboard-list">{leaderboard.map((player) => <div className={`rank-row rank-${player.rank}`} key={player.name}><strong>{player.rank}</strong><span className="rank-arrow">{player.rankChange === "climbed" ? "↑" : player.rankChange === "dropped" ? "↓" : "—"}</span><span className="avatar">{player.name?.charAt(0)}</span><span className="rank-name">{player.name}</span><span className="rank-score">{player.score}<small> pts</small></span></div>)}</div></section>;
 }
 
-function Results({ leaderboard, accuracy, averageSpeed, topics, onHome }) {
-  return <section className="results-panel"><div className="eyebrow">Game complete</div><h1>That’s a wrap.</h1><p className="results-copy">A sharp finish. Here’s your performance snapshot.</p><div className="metrics"><div><strong>{leaderboard[0]?.score || 0}</strong><span>Total points</span></div><div><strong>{accuracy}%</strong><span>Accuracy</span></div><div><strong>{averageSpeed}s</strong><span>Avg. speed</span></div></div><div className="chart-card"><div className="card-top"><div><span className="label">TOPIC STRENGTHS</span><h2>Where you shine</h2></div><span className="chart-legend"><i /> Accuracy</span></div><div className="chart-wrap"><ResponsiveContainer height={220} width="100%"><BarChart data={topics.length ? topics : [{ topic: "Play more", accuracy: 0 }]} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip cursor={{ fill: "#f4f1eb" }} formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.teal} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div><button className="secondary-button" onClick={onHome} type="button">Back to home</button></section>;
+function Results({ leaderboard, accuracy, averageSpeed, topics, isHost, onDashboard, onHome }) {
+  return <section className="results-panel"><div className="eyebrow">Game complete</div><h1>That’s a wrap.</h1><p className="results-copy">A sharp finish. Here’s your performance snapshot.</p><div className="metrics"><div><strong>{leaderboard[0]?.score || 0}</strong><span>Total points</span></div><div><strong>{accuracy}%</strong><span>Accuracy</span></div><div><strong>{averageSpeed}s</strong><span>Avg. speed</span></div></div><div className="chart-card"><div className="card-top"><div><span className="label">TOPIC STRENGTHS</span><h2>Where you shine</h2></div><span className="chart-legend"><i /> Accuracy</span></div><div className="chart-wrap"><ResponsiveContainer height={220} width="100%"><BarChart data={topics.length ? topics : [{ topic: "Play more", accuracy: 0 }]} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip cursor={{ fill: "#f4f1eb" }} formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.teal} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div>{isHost && <button className="primary-button" onClick={onDashboard} type="button">Open host dashboard →</button>}<button className="secondary-button" onClick={onHome} type="button">Back to home</button></section>;
+}
+
+function HostResults({ data, onHome }) {
+  if (!data) return <section className="results-panel"><p className="error">Results are not available.</p></section>;
+  const downloadCsv = () => {
+    const columns = ["Player", "Question", "Topic", "Selected option", "Correct option", "Correct", "Answered at"];
+    const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const rows = data.players.map((row) => [
+      row.name, row.question, row.topic || "", row.selectedIndex === null ? "" : row.selectedIndex + 1,
+      row.correctIndex + 1, row.isCorrect ? "Yes" : "No", row.answeredAt || ""
+    ]);
+    const csv = [columns, ...rows].map((row) => row.map(escape).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `aptiquiz-${data.roomCode}-results.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  return <section className="host-results-panel"><div className="section-heading"><div><div className="eyebrow">Host dashboard · {data.roomCode}</div><h1>Results, at a glance.</h1><p>See where the room found its edge and where it got stuck.</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div><div className="dashboard-actions"><button className="primary-button" onClick={downloadCsv} type="button">Download all results (CSV)</button></div><div className="dashboard-grid"><div className="chart-card"><span className="label">PER-QUESTION ACCURACY</span><h2>How the room performed</h2><div className="dashboard-table">{data.questions.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.percentageCorrect}%<small>{item.correctCount}/{item.missedCount + item.answerCount} correct</small></strong></div>)}</div></div><div className="chart-card"><span className="label">MOST MISSED</span><h2>Needs another look</h2><div className="dashboard-table">{data.mostMissed.map((item) => <div className="dashboard-row" key={item.questionId}><span><b>Q{item.questionNumber}</b> {item.text}</span><strong>{item.missedCount}<small>missed</small></strong></div>)}</div></div><div className="chart-card topic-dashboard"><span className="label">TOPIC ACCURACY</span><h2>Strength by topic</h2><div className="chart-wrap"><ResponsiveContainer height={230} width="100%"><BarChart data={data.topics} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.coral} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div></div></section>;
 }
 
 function League({ period, setPeriod, college, setCollege, data, error, onHome }) {
