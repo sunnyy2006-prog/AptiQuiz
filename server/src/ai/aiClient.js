@@ -2,15 +2,17 @@ import { GoogleGenAI } from "@google/genai";
 
 const timeoutMs = 20_000;
 
-export async function generateText({ system, user, maxTokens = 700 }) {
+export async function generateText({ system, user, maxTokens = 700, json = false }) {
   if (!process.env.AI_API_KEY) return null;
   const client = new GoogleGenAI({ apiKey: process.env.AI_API_KEY });
   const generation = client.models.generateContent({
-    model: process.env.AI_MODEL || "gemini-2.5-flash",
+    model: process.env.AI_MODEL || "gemini-3.5-flash",
     contents: user,
     config: {
       systemInstruction: system,
-      maxOutputTokens: maxTokens
+      maxOutputTokens: maxTokens,
+      thinkingConfig: { thinkingBudget: 0 },
+      ...(json ? { responseMimeType: "application/json" } : {})
     }
   });
   const timeout = new Promise((_, reject) => {

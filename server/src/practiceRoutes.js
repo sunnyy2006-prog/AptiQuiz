@@ -120,7 +120,7 @@ async function generateQuestion(session) {
   const system = "You write fair, self-contained aptitude practice questions. Do not mention personal data. Keep explanations concise.";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const raw = await generateText({ system, user, maxTokens: 700 });
+      const raw = await generateText({ system, user, maxTokens: 1000, json: true });
       if (!raw) return fallback();
       return parseGeneratedQuestion(raw);
     } catch {
@@ -254,7 +254,8 @@ router.post("/finish", async (request, response) => {
       const raw = await generateText({
         system: "You provide concise study tips from quiz metrics only. Return ONLY a JSON array of 3 or 4 strings. Never mention personal data.",
         user: `Metrics: ${JSON.stringify(summary)}`,
-        maxTokens: 300
+        maxTokens: 500,
+        json: true
       });
       const parsed = z.array(z.string().trim().min(1).max(300)).min(3).max(4).safeParse(JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim()));
       if (parsed.success) tips = parsed.data;
