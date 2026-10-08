@@ -138,6 +138,7 @@ function loadQuestions(database, questionSetId) {
     text: question.text,
     options: JSON.parse(question.options),
     correctIndex: question.correct_index,
+    topic: question.topic,
     imageUrl: question.image_url,
     tableJson: question.table_json === null ? null : JSON.parse(question.table_json)
   }));
@@ -199,7 +200,7 @@ function broadcastRoom(io, room) {
   } else if (room.state === GAME_STATES.REVEAL) {
     for (const [playerId] of room.players) sendPlayerView(io, null, room, playerId, players);
   } else if (room.state === GAME_STATES.LEADERBOARD || room.state === GAME_STATES.FINISHED) {
-    io.to(room.code).emit("game:leaderboard", { leaderboard: players });
+    io.to(room.code).emit("game:leaderboard", { leaderboard: players, state: room.state });
   }
 }
 
@@ -225,6 +226,7 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
     target.emit("question:start", {
       questionId: room.currentQuestion.id,
       text: room.currentQuestion.text,
+      topic: room.currentQuestion.topic,
       options: mapping.map((index) => room.currentQuestion.options[index]),
       imageUrl: room.currentQuestion.imageUrl,
       tableJson: room.currentQuestion.tableJson,
@@ -239,6 +241,7 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
     target.emit("question:reveal", {
       questionId: room.currentQuestion.id,
       text: room.currentQuestion.text,
+      topic: room.currentQuestion.topic,
       options: mapping.map((index) => room.currentQuestion.options[index]),
       correctIndex: room.currentQuestion.correctIndex,
       correctOption: room.currentQuestion.options[room.currentQuestion.correctIndex],
@@ -251,7 +254,7 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
       leaderboard: players
     });
   } else if (room.state === GAME_STATES.LEADERBOARD || room.state === GAME_STATES.FINISHED) {
-    target.emit("game:leaderboard", { leaderboard: players });
+    target.emit("game:leaderboard", { leaderboard: players, state: room.state });
   }
 }
 

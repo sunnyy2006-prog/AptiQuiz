@@ -1,149 +1,227 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { io } from "socket.io-client";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 const socket = io();
+const STORAGE = {
+  code: "aptiquiz.roomCode",
+  name: "aptiquiz.playerName",
+  token: "aptiquiz.sessionToken"
+};
+
+const colors = {
+  ink: "#172033",
+  muted: "#5e6b80",
+  teal: "#007c83",
+  coral: "#d95d39",
+  gold: "#d39b24"
+};
 
 export default function App() {
-  const [roomId, setRoomId] = useState(() => localStorage.getItem("aptiquiz.roomCode") || "");
-  const [playerName, setPlayerName] = useState(() => localStorage.getItem("aptiquiz.playerName") || "");
-  const [joinedRoom, setJoinedRoom] = useState("");
-  const [players, setPlayers] = useState([]);
+  const [screen, setScreen] = useState("home");
+  const [mode, setMode] = useState("join");
+  const [name, setName] = useState(() => localStorage.getItem(STORAGE.name) || "");
+  const [code, setCode] = useState(() => localStorage.getItem(STORAGE.code) || "");
+  const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(STORAGE.token) || "");
+  const [room, setRoom] = useState(null);
+  const [question, setQuestion] = useState(null);
+  const [reveal, setReveal] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [answers, setAnswers] = useState([]);
   const [error, setError] = useState("");
-  const [gameState, setGameState] = useState("lobby");
-  const [currentQuestion, setCurrentQuestion] = useState(null);
+  const [seconds, setSeconds] = useState(0);
+  const [answered, setAnswered] = useState(false);
 
   useEffect(() => {
-    const handlePlayers = (roomPlayers) => setPlayers(roomPlayers);
-    const handleError = ({ message }) => {
+    const onRoom = (data) => {
+      setRoom((current) => ({ ...current, ...data }));
+      if (data.code) {
+        setCode(data.code);
+        localStorage.setItem(STORAGE.code, data.code);
+      }
+      if (data.sessionToken) {
+        setSessionToken(data.sessionToken);
+        localStorage.setItem(STORAGE.token, data.sessionToken);
+      }
+      if (data.reconnected) setError("");
+      setScreen("lobby");
+    };
+    const onState = (data) => {
+      setRoom((current) => ({ ...current, ...data }));
+      setLeaderboard(data.players || []);
+      if (data.state === "question") setScreen("question");
+      if (data.state === "reveal") setScreen("reveal");
+      if (data.state === "leaderboard") setScreen("leaderboard");
+      if (data.state === "finished") setScreen("results");
+    };
+    const onQuestion = (data) => {
+      setQuestion(data);
+      setReveal(null);
+      setAnswered(false);
+      setSeconds(Math.ceil((data.remainingMs ?? data.timeLimitMs) / 1000));
+      setScreen("question");
+    };
+    const onReveal = (data) => {
+      setReveal(data);
+      setQuestion((current) => ({ ...current, ...data }));
+      setScreen("reveal");
+    };
+    const onLeaderboard = ({ leaderboard: next, state }) => {
+      setLeaderboard(next || []);
+      setScreen(state === "finished" ? "results" : "leaderboard");
+    };
+    const onAnswer = (result) => {
+      if (result.accepted) {
+        setAnswered(true);
+        setAnswers((current) => [...current, { ...result, topic: question?.topic }]);
+      } else setError(result.reason);
+    };
+    const onError = ({ message }) => {
       setError(message);
-      if (/room not found|room is closed|session token is not valid/i.test(message)) {
-        localStorage.removeItem("aptiquiz.sessionToken");
-        localStorage.removeItem("aptiquiz.roomCode");
+      if (/not found|closed|token is not valid/i.test(message)) {
+        localStorage.removeItem(STORAGE.code);
+        localStorage.removeItem(STORAGE.token);
       }
     };
-    const handleJoined = ({ code, sessionToken, reconnected }) => {
-      setJoinedRoom(code);
-      localStorage.setItem("aptiquiz.sessionToken", sessionToken);
-      localStorage.setItem("aptiquiz.roomCode", code);
-      localStorage.setItem("aptiquiz.playerName", playerName);
-      if (reconnected) setError("");
-    };
-    const handleRoomState = ({ state, players: roomPlayers }) => {
-      setGameState(state);
-      setPlayers(roomPlayers);
-    };
-    const handleQuestion = (question) => setCurrentQuestion(question);
-    const handleConnect = () => {
-      const storedCode = localStorage.getItem("aptiquiz.roomCode");
-      const sessionToken = localStorage.getItem("aptiquiz.sessionToken");
-      const storedName = localStorage.getItem("aptiquiz.playerName");
-      if (storedCode && sessionToken) {
-        socket.emit("room:join", { code: storedCode, playerName: storedName, sessionToken });
-      }
+    const onConnect = () => {
+      const storedCode = localStorage.getItem(STORAGE.code);
+      const token = localStorage.getItem(STORAGE.token);
+      const storedName = localStorage.getItem(STORAGE.name);
+      if (storedCode && token) socket.emit("room:join", { code: storedCode, sessionToken: token, playerName: storedName });
     };
 
-    socket.on("connect", handleConnect);
-    socket.on("room:joined", handleJoined);
-    socket.on("room:created", handleJoined);
-    socket.on("room:players", handlePlayers);
-    socket.on("room:error", handleError);
-    socket.on("room:state", handleRoomState);
-    socket.on("question:start", handleQuestion);
-    socket.on("question:reveal", (reveal) => {
-      setGameState("reveal");
-      setCurrentQuestion(reveal);
-    });
-    socket.on("game:leaderboard", () => setGameState("leaderboard"));
+    socket.on("connect", onConnect);
+    socket.on("room:created", onRoom);
+    socket.on("room:joined", onRoom);
+    socket.on("room:state", onState);
+    socket.on("question:start", onQuestion);
+    socket.on("question:reveal", onReveal);
+    socket.on("game:leaderboard", onLeaderboard);
+    socket.on("game:answer-result", onAnswer);
+    socket.on("room:error", onError);
     return () => {
-      socket.off("room:joined", handleJoined);
-      socket.off("room:created", handleJoined);
-      socket.off("room:players", handlePlayers);
-      socket.off("room:error", handleError);
-      socket.off("room:state", handleRoomState);
-      socket.off("question:start", handleQuestion);
-      socket.off("question:reveal");
-      socket.off("game:leaderboard");
-      socket.off("connect", handleConnect);
+      socket.off("connect", onConnect);
+      socket.off("room:created", onRoom);
+      socket.off("room:joined", onRoom);
+      socket.off("room:state", onState);
+      socket.off("question:start", onQuestion);
+      socket.off("question:reveal", onReveal);
+      socket.off("game:leaderboard", onLeaderboard);
+      socket.off("game:answer-result", onAnswer);
+      socket.off("room:error", onError);
     };
-  }, []);
+  }, [question?.topic, room?.state]);
 
-  function joinRoom(event) {
+  useEffect(() => {
+    if (screen !== "question" || seconds <= 0) return undefined;
+    const timer = window.setInterval(() => setSeconds((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [screen, seconds]);
+
+  const isHost = room?.isHost ?? false;
+  const accuracy = answers.length ? Math.round((answers.filter((answer) => answer.isCorrect).length / answers.length) * 100) : 0;
+  const averageSpeed = answers.length ? Math.round(answers.reduce((total, answer) => total + (answer.answerTimeMs || 0), 0) / answers.length / 100) / 10 : 0;
+  const topics = useMemo(() => {
+    const byTopic = answers.reduce((all, answer) => {
+      const current = all[answer.topic || "Mixed"] || { correct: 0, total: 0 };
+      current.total += 1;
+      current.correct += answer.isCorrect ? 1 : 0;
+      all[answer.topic || "Mixed"] = current;
+      return all;
+    }, {});
+    return Object.entries(byTopic).map(([topic, value]) => ({ topic, accuracy: Math.round((value.correct / value.total) * 100) }));
+  }, [answers]);
+
+  function submit(event) {
     event.preventDefault();
     setError("");
-    socket.emit("room:join", {
-      code: roomId,
-      playerName,
-      sessionToken: localStorage.getItem("aptiquiz.roomCode") === roomId.toUpperCase()
-        ? localStorage.getItem("aptiquiz.sessionToken") || undefined
-        : undefined
-    });
-    localStorage.setItem("aptiquiz.playerName", playerName);
+    localStorage.setItem(STORAGE.name, name);
+    if (mode === "create") {
+      socket.emit("room:create", { playerName: name });
+    } else {
+      socket.emit("room:join", { code: code.toUpperCase(), playerName: name, sessionToken: localStorage.getItem(STORAGE.code) === code.toUpperCase() ? sessionToken : undefined });
+    }
+  }
+
+  function answer(index) {
+    if (!answered && screen === "question") socket.emit("game:answer", { optionIndex: index });
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-12 text-slate-100">
-      <div className="mx-auto max-w-3xl">
-        <p className="mb-3 text-sm font-semibold uppercase tracking-[0.3em] text-cyan-400">
-          AptiQuiz
-        </p>
-        <h1 className="mb-4 text-4xl font-bold tracking-tight sm:text-6xl">
-          Think fast. Play together.
-        </h1>
-        <p className="mb-10 max-w-xl text-lg text-slate-400">
-          A real-time aptitude quiz for your next group challenge.
-        </p>
-
-        {joinedRoom ? (
-          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-            <p className="text-sm text-slate-400">You are in room</p>
-            <h2 className="mt-1 text-3xl font-bold text-cyan-300">{joinedRoom}</h2>
-            <p className="mt-6 font-medium">{players.length} / 50 players</p>
-            <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-              {players.map((player) => (
-                <li className="rounded-lg bg-slate-800 px-3 py-2 text-slate-300" key={player.name}>
-                  {player.name}
-                </li>
-              ))}
-            </ul>
-            {currentQuestion && (
-              <div className="mt-8 border-t border-slate-800 pt-6">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-                  {gameState} {currentQuestion.remainingMs ? `· ${Math.ceil(currentQuestion.remainingMs / 1000)}s remaining` : ""}
-                </p>
-                <h3 className="text-xl font-semibold">{currentQuestion.text}</h3>
-                <div className="mt-4 grid gap-2">
-                  {currentQuestion.options?.map((option, index) => (
-                    <button
-                      className="rounded-lg border border-slate-700 px-3 py-2 text-left transition hover:border-cyan-400 hover:bg-slate-800"
-                      disabled={gameState !== "question"}
-                      key={`${option}-${index}`}
-                      onClick={() => socket.emit("game:answer", { optionIndex: index })}
-                      type="button"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        ) : (
-          <form className="max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl" onSubmit={joinRoom}>
-            <label className="block text-sm font-medium text-slate-300">
-              Your name
-              <input className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none ring-cyan-400 focus:ring-2" onChange={(event) => setPlayerName(event.target.value)} placeholder="Ada" value={playerName} />
-            </label>
-            <label className="block text-sm font-medium text-slate-300">
-              Room code
-              <input className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 uppercase outline-none ring-cyan-400 focus:ring-2" onChange={(event) => setRoomId(event.target.value)} placeholder="QUIZ42" value={roomId} />
-            </label>
-            {error && <p className="text-sm text-rose-400">{error}</p>}
-            <button className="w-full rounded-lg bg-cyan-400 px-4 py-2 font-bold text-slate-950 transition hover:bg-cyan-300" type="submit">
-              Join room
-            </button>
-          </form>
-        )}
-      </div>
-    </main>
+    <div className="app-shell">
+      <header className="site-header">
+        <button className="brand" onClick={() => setScreen("home")} type="button" aria-label="Go to AptiQuiz home">
+          <span className="brand-mark">A</span>
+          <span>Apti<span>Quiz</span></span>
+        </button>
+        <span className="live-pill"><i /> Live rooms</span>
+      </header>
+      <main className="page">
+        {screen === "home" && <Home mode={mode} setMode={setMode} name={name} setName={setName} code={code} setCode={setCode} submit={submit} error={error} />}
+        {screen === "lobby" && <Lobby room={room} code={code} name={name} isHost={isHost} error={error} onStart={() => socket.emit("game:start")} />}
+        {screen === "question" && question && <Question question={question} seconds={seconds} answered={answered} answer={answer} />}
+        {screen === "reveal" && <Reveal reveal={reveal} />}
+        {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} />}
+        {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} onHome={() => window.location.reload()} />}
+      </main>
+    </div>
   );
+}
+
+function Home({ mode, setMode, name, setName, code, setCode, submit, error }) {
+  return (
+    <section className="hero-grid">
+      <div className="hero-copy">
+        <div className="eyebrow">Fast minds. One room.</div>
+        <h1>Make every answer <em>count.</em></h1>
+        <p>Challenge your crew with live aptitude rounds, instant reveals, and a leaderboard that keeps everyone moving.</p>
+        <div className="trust-row"><span>⚡ Real-time play</span><span>♧ Up to 50 players</span><span>◉ No sign-up</span></div>
+      </div>
+      <form className="join-card" onSubmit={submit}>
+        <div className="segmented" role="tablist" aria-label="Room action">
+          <button className={mode === "join" ? "active" : ""} onClick={() => setMode("join")} role="tab" type="button">Join a room</button>
+          <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")} role="tab" type="button">Create room</button>
+        </div>
+        <h2>{mode === "create" ? "Start a challenge" : "Ready when you are."}</h2>
+        <p className="card-note">{mode === "create" ? "You’ll be the host. Invite your team with a room code." : "Enter the code your host shared with you."}</p>
+        <label>Your name<input autoComplete="nickname" maxLength="40" onChange={(event) => setName(event.target.value)} placeholder="e.g. Priya" required value={name} /></label>
+        {mode === "join" && <label>Room code<input aria-describedby="code-help" autoCapitalize="characters" maxLength="5" onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCDE" required value={code} /><small id="code-help">5 characters, shown by your host</small></label>}
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary-button" type="submit">{mode === "create" ? "Create room →" : "Join room →"}</button>
+        <p className="privacy-note">Your name is only visible to players in this room.</p>
+      </form>
+    </section>
+  );
+}
+
+function Lobby({ room, code, name, isHost, error, onStart }) {
+  const players = room?.players || [];
+  const inviteUrl = `${window.location.origin}/?room=${code}`;
+  return (
+    <section className="lobby-layout">
+      <div className="section-heading"><div><div className="eyebrow">Room lobby</div><h1>Gather your team.</h1><p>Everyone’s here? The host can start the first round.</p></div><span className="status-badge"><i /> Waiting</span></div>
+      <div className="lobby-grid">
+        <div className="code-card"><div><span className="label">ROOM CODE</span><strong>{code}</strong><button className="copy-button" onClick={() => navigator.clipboard?.writeText(code)} type="button">Copy code</button></div><QRCodeSVG bgColor="#fffdf8" fgColor={colors.ink} level="M" size={112} value={inviteUrl} title="QR code to join this room" /></div>
+        <div className="players-card"><div className="card-top"><div><span className="label">PLAYERS</span><h2>{players.length}<small> / 50</small></h2></div><span className="you-badge">You: {name}</span></div><ul className="player-list">{players.map((player, index) => <li className="player-row" key={`${player.name}-${index}`}><span className="avatar">{player.name?.charAt(0).toUpperCase()}</span><span>{player.name}</span>{index === 0 && <span className="host-label">HOST</span>}<span className={player.connected ? "online-dot" : "offline-dot"} /> </li>)}</ul>{error && <p className="error" role="alert">{error}</p>}{isHost ? <button className="primary-button" disabled={players.length < 1} onClick={onStart} type="button">Start game <span>→</span></button> : <p className="waiting-message"><span className="pulse-dot" /> Waiting for the host to start…</p>}</div>
+      </div>
+    </section>
+  );
+}
+
+function Question({ question, seconds, answered, answer }) {
+  const progress = Math.max(0, Math.min(100, (seconds / (question.timeLimitMs / 1000)) * 100));
+  return <section className="game-panel"><div className="question-meta"><span>QUESTION {question.questionNumber} <b>/ {question.totalQuestions}</b></span><span className="topic-chip">{question.topic || "Aptitude"}</span></div><div className="countdown-row"><strong>{seconds}s</strong><div className="countdown-track"><div style={{ width: `${progress}%` }} /></div><span>Time left</span></div><h1 className="question-title">{question.text}</h1><div className="options-grid">{question.options.map((option, index) => <button aria-label={`Option ${String.fromCharCode(65 + index)}: ${option}`} className={`option-button option-${index}`} disabled={answered || seconds === 0} key={`${option}-${index}`} onClick={() => answer(index)} type="button"><span className="option-key">{String.fromCharCode(65 + index)}</span><span>{option}</span></button>)}</div>{answered && <div className="answer-confirmation" role="status">Answer locked in. Nice work.</div>}</section>;
+}
+
+function Reveal({ reveal }) {
+  return <section className="reveal-panel"><div className="result-icon">✓</div><div className="eyebrow">Answer revealed</div><h1>{reveal?.correctOption || "Round complete"}</h1><p className="reveal-copy">The correct answer is highlighted. Here’s how you did this round.</p><div className="reveal-stats"><div><span>Your points</span><strong>{reveal?.answer?.points ?? 0}</strong></div><div><span>Result</span><strong className={reveal?.answer?.isCorrect ? "correct-text" : "muted-text"}>{reveal?.answer?.isCorrect ? "Correct" : "Keep going"}</strong></div></div></section>;
+}
+
+function Leaderboard({ leaderboard }) {
+  return <section className="leaderboard-panel"><div className="section-heading"><div><div className="eyebrow">Current standings</div><h1>Leaderboard</h1><p>Every point changes the game.</p></div><span className="trophy">♛</span></div><div className="leaderboard-list">{leaderboard.map((player) => <div className={`rank-row rank-${player.rank}`} key={player.name}><strong>{player.rank}</strong><span className="rank-arrow">{player.rankChange === "climbed" ? "↑" : player.rankChange === "dropped" ? "↓" : "—"}</span><span className="avatar">{player.name?.charAt(0)}</span><span className="rank-name">{player.name}</span><span className="rank-score">{player.score}<small> pts</small></span></div>)}</div></section>;
+}
+
+function Results({ leaderboard, accuracy, averageSpeed, topics, onHome }) {
+  return <section className="results-panel"><div className="eyebrow">Game complete</div><h1>That’s a wrap.</h1><p className="results-copy">A sharp finish. Here’s your performance snapshot.</p><div className="metrics"><div><strong>{leaderboard[0]?.score || 0}</strong><span>Total points</span></div><div><strong>{accuracy}%</strong><span>Accuracy</span></div><div><strong>{averageSpeed}s</strong><span>Avg. speed</span></div></div><div className="chart-card"><div className="card-top"><div><span className="label">TOPIC STRENGTHS</span><h2>Where you shine</h2></div><span className="chart-legend"><i /> Accuracy</span></div><div className="chart-wrap"><ResponsiveContainer height={220} width="100%"><BarChart data={topics.length ? topics : [{ topic: "Play more", accuracy: 0 }]} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip cursor={{ fill: "#f4f1eb" }} formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.teal} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div><button className="secondary-button" onClick={onHome} type="button">Back to home</button></section>;
 }

@@ -94,11 +94,11 @@ export class GameRoom {
     const emittedAt = player.questionEmittedAt ?? this.roundStartedAt;
     const timeLeftMs = Math.max(0, emittedAt + this.options.timeLimitMs - answeredAt);
     const points = calculateScore({ isCorrect, timeLeftMs, timeLimitMs: this.options.timeLimitMs });
-    player.answer = { shuffledIndex, originalIndex, isCorrect, points, answeredAt };
+    player.answer = { shuffledIndex, originalIndex, isCorrect, points, answeredAt, answerTimeMs: answeredAt - emittedAt };
     player.score += points;
 
     if (this.allPlayersAnswered()) this.endQuestion();
-    return { accepted: true, isCorrect, points };
+    return { accepted: true, isCorrect, points, answerTimeMs: answeredAt - emittedAt };
   }
 
   startQuestion() {
