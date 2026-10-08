@@ -20,6 +20,7 @@ export function registerGameSockets(io, database, options = {}) {
         const questions = loadQuestions(database, payload.questionSetId);
         const code = createRoomCode(rooms);
         const sessionToken = createSessionToken();
+        const collegeId = ensureCollege(database, payload.collegeId, payload.collegeName);
         const room = new GameRoom({
           code,
           hostId: sessionToken,
@@ -27,8 +28,10 @@ export function registerGameSockets(io, database, options = {}) {
           questions,
           options: { timeLimitMs, revealDurationMs, leaderboardDurationMs }
         });
+        room.collegeId = collegeId;
         room.onStateChange = (currentRoom) => {
           if (currentRoom.state === GAME_STATES.FINISHED) {
+            persistLeagueScores(database, currentRoom);
             setRoomStatus(database, currentRoom.code, "completed");
           }
           broadcastRoom(io, currentRoom);
@@ -37,7 +40,7 @@ export function registerGameSockets(io, database, options = {}) {
         socket.join(code);
         socket.data.roomCode = code;
         socket.data.playerId = sessionToken;
-        persistRoom(database, room, payload.collegeId, payload.questionSetId);
+        persistRoom(database, room, collegeId, payload.questionSetId);
         persistPlayer(database, room, sessionToken, socket.id);
         socket.emit("room:created", { code, sessionToken, isHost: true });
         broadcastRoom(io, room);
@@ -163,6 +166,37 @@ function persistRoom(database, room, collegeId, questionSetId) {
   `).run(room.code, collegeId ? Number(collegeId) : null, questionSetId ? Number(questionSetId) : null);
 }
 
+function ensureCollege(database, collegeId, collegeName) {
+  if (collegeId) {
+    const college = database.prepare("SELECT id FROM colleges WHERE id = ?").get(Number(collegeId));
+    if (!college) throw new Error("College not found.");
+    return college.id;
+  }
+  if (!collegeName) return null;
+  database.prepare("INSERT OR IGNORE INTO colleges (name) VALUES (?)").run(collegeName);
+  return database.prepare("SELECT id FROM colleges WHERE name = ?").get(collegeName).id;
+}
+
+function persistLeagueScores(database, room) {
+  if (room.leagueScoresPersisted) return;
+  const dbRoom = database.prepare("SELECT id FROM rooms WHERE code = ?").get(room.code);
+  if (!dbRoom) return;
+  const insert = database.prepare(`
+    INSERT OR IGNORE INTO league_scores
+      (room_id, player_id, college_id, player_name, points, correct_answers, total_answers,
+       average_answer_time_ms, played_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `);
+  database.transaction(() => {
+    for (const player of room.players.values()) {
+      const dbPlayer = database.prepare("SELECT id FROM players WHERE room_id = ? AND name = ?").get(dbRoom.id, player.name);
+      if (!dbPlayer) continue;
+      const average = player.totalAnswers ? Math.round(player.totalAnswerTimeMs / player.totalAnswers) : 0;
+      insert.run(dbRoom.id, dbPlayer.id, room.collegeId ?? null, player.name, player.score, player.correctAnswers, player.totalAnswers, average);
+    }
+  })();
+  room.leagueScoresPersisted = true;
+}
 function persistPlayer(database, room, playerId, socketId) {
   const dbRoom = database.prepare("SELECT id FROM rooms WHERE code = ?").get(room.code);
   const player = room.players.get(playerId);

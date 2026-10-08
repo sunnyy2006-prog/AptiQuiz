@@ -24,6 +24,7 @@ export default function App() {
   const [name, setName] = useState(() => localStorage.getItem(STORAGE.name) || "");
   const [code, setCode] = useState(() => localStorage.getItem(STORAGE.code) || "");
   const [sessionToken, setSessionToken] = useState(() => localStorage.getItem(STORAGE.token) || "");
+  const [collegeName, setCollegeName] = useState("");
   const [room, setRoom] = useState(null);
   const [question, setQuestion] = useState(null);
   const [reveal, setReveal] = useState(null);
@@ -32,6 +33,22 @@ export default function App() {
   const [error, setError] = useState("");
   const [seconds, setSeconds] = useState(0);
   const [answered, setAnswered] = useState(false);
+  const [leaguePeriod, setLeaguePeriod] = useState("all");
+  const [leagueCollege, setLeagueCollege] = useState("");
+  const [leagueData, setLeagueData] = useState({ players: [], colleges: [] });
+
+  useEffect(() => {
+    if (screen !== "league") return;
+    const query = new URLSearchParams({ period: leaguePeriod });
+    if (leagueCollege) query.set("collegeId", leagueCollege);
+    fetch(`/api/league?${query}`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load the league.");
+        return response.json();
+      })
+      .then(setLeagueData)
+      .catch((loadError) => setError(loadError.message));
+  }, [screen, leaguePeriod, leagueCollege]);
 
   useEffect(() => {
     const onRoom = (data) => {
@@ -138,7 +155,7 @@ export default function App() {
     setError("");
     localStorage.setItem(STORAGE.name, name);
     if (mode === "create") {
-      socket.emit("room:create", { playerName: name });
+      socket.emit("room:create", { playerName: name, collegeName: collegeName || undefined });
     } else {
       socket.emit("room:join", { code: code.toUpperCase(), playerName: name, sessionToken: localStorage.getItem(STORAGE.code) === code.toUpperCase() ? sessionToken : undefined });
     }
@@ -155,21 +172,22 @@ export default function App() {
           <span className="brand-mark">A</span>
           <span>Apti<span>Quiz</span></span>
         </button>
-        <span className="live-pill"><i /> Live rooms</span>
+        <button className="league-link" onClick={() => setScreen("league")} type="button">View league <span>↗</span></button>
       </header>
       <main className="page">
-        {screen === "home" && <Home mode={mode} setMode={setMode} name={name} setName={setName} code={code} setCode={setCode} submit={submit} error={error} />}
+        {screen === "home" && <Home mode={mode} setMode={setMode} name={name} setName={setName} code={code} setCode={setCode} collegeName={collegeName} setCollegeName={setCollegeName} submit={submit} error={error} />}
         {screen === "lobby" && <Lobby room={room} code={code} name={name} isHost={isHost} error={error} onStart={() => socket.emit("game:start")} />}
         {screen === "question" && question && <Question question={question} seconds={seconds} answered={answered} answer={answer} />}
         {screen === "reveal" && <Reveal reveal={reveal} />}
         {screen === "leaderboard" && <Leaderboard leaderboard={leaderboard} />}
         {screen === "results" && <Results leaderboard={leaderboard} accuracy={accuracy} averageSpeed={averageSpeed} topics={topics} onHome={() => window.location.reload()} />}
+        {screen === "league" && <League period={leaguePeriod} setPeriod={setLeaguePeriod} college={leagueCollege} setCollege={setLeagueCollege} data={leagueData} error={error} onHome={() => setScreen("home")} />}
       </main>
     </div>
   );
 }
 
-function Home({ mode, setMode, name, setName, code, setCode, submit, error }) {
+function Home({ mode, setMode, name, setName, code, setCode, collegeName, setCollegeName, submit, error }) {
   return (
     <section className="hero-grid">
       <div className="hero-copy">
@@ -186,6 +204,7 @@ function Home({ mode, setMode, name, setName, code, setCode, submit, error }) {
         <h2>{mode === "create" ? "Start a challenge" : "Ready when you are."}</h2>
         <p className="card-note">{mode === "create" ? "You’ll be the host. Invite your team with a room code." : "Enter the code your host shared with you."}</p>
         <label>Your name<input autoComplete="nickname" maxLength="40" onChange={(event) => setName(event.target.value)} placeholder="e.g. Priya" required value={name} /></label>
+        {mode === "create" && <label>College <span className="optional-label">(optional)</span><input maxLength="120" onChange={(event) => setCollegeName(event.target.value)} placeholder="e.g. Delhi University" value={collegeName} /></label>}
         {mode === "join" && <label>Room code<input aria-describedby="code-help" autoCapitalize="characters" maxLength="5" onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABCDE" required value={code} /><small id="code-help">5 characters, shown by your host</small></label>}
         {error && <p className="error" role="alert">{error}</p>}
         <button className="primary-button" type="submit">{mode === "create" ? "Create room →" : "Join room →"}</button>
@@ -224,4 +243,30 @@ function Leaderboard({ leaderboard }) {
 
 function Results({ leaderboard, accuracy, averageSpeed, topics, onHome }) {
   return <section className="results-panel"><div className="eyebrow">Game complete</div><h1>That’s a wrap.</h1><p className="results-copy">A sharp finish. Here’s your performance snapshot.</p><div className="metrics"><div><strong>{leaderboard[0]?.score || 0}</strong><span>Total points</span></div><div><strong>{accuracy}%</strong><span>Accuracy</span></div><div><strong>{averageSpeed}s</strong><span>Avg. speed</span></div></div><div className="chart-card"><div className="card-top"><div><span className="label">TOPIC STRENGTHS</span><h2>Where you shine</h2></div><span className="chart-legend"><i /> Accuracy</span></div><div className="chart-wrap"><ResponsiveContainer height={220} width="100%"><BarChart data={topics.length ? topics : [{ topic: "Play more", accuracy: 0 }]} layout="vertical" margin={{ left: 14, right: 18 }}><CartesianGrid horizontal={false} stroke="#e5e1d9" /><XAxis domain={[0, 100]} hide type="number" /><YAxis axisLine={false} dataKey="topic" tick={{ fill: colors.muted, fontSize: 12 }} tickLine={false} type="category" width={110} /><Tooltip cursor={{ fill: "#f4f1eb" }} formatter={(value) => [`${value}%`, "Accuracy"]} /><Bar dataKey="accuracy" fill={colors.teal} radius={[0, 5, 5, 0]} /></BarChart></ResponsiveContainer></div></div><button className="secondary-button" onClick={onHome} type="button">Back to home</button></section>;
+}
+
+function League({ period, setPeriod, college, setCollege, data, error, onHome }) {
+  const [colleges, setColleges] = useState([]);
+  useEffect(() => {
+    fetch("/api/league/colleges").then((response) => response.json()).then(({ colleges: available }) => setColleges(available || []));
+  }, []);
+  return <section className="league-panel">
+    <div className="section-heading"><div><div className="eyebrow">AptiQuiz league</div><h1>Play for your campus.</h1><p>See who is leading across every live challenge.</p></div><button className="back-link" onClick={onHome} type="button">← Home</button></div>
+    <div className="league-controls" aria-label="League filters">
+      <div className="period-tabs" role="tablist" aria-label="Time period">
+        {[["today", "Today"], ["week", "This week"], ["all", "All time"]].map(([value, label]) => <button className={period === value ? "active" : ""} key={value} onClick={() => setPeriod(value)} role="tab" type="button">{label}</button>)}
+      </div>
+      <label className="filter-label">College
+        <select aria-label="Filter by college" onChange={(event) => setCollege(event.target.value)} value={college}>
+          <option value="">All colleges</option>
+          {colleges.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
+    </div>
+    {error && <p className="error" role="alert">{error}</p>}
+    <div className="league-grid">
+      <div className="league-card"><div className="card-top"><div><span className="label">TOP PLAYERS</span><h2>Sharpest minds</h2></div><span className="trophy">♛</span></div><div className="league-table">{data.players.length ? data.players.map((player, index) => <div className="league-row" key={`${player.name}-${player.college}`}><strong>{index + 1}</strong><span className="avatar">{player.name.charAt(0)}</span><span className="league-name">{player.name}<small>{player.college} · {player.games_played} games</small></span><b>{player.points}<small> pts</small></b></div>) : <p className="empty-state">No scores for this period yet.</p>}</div></div>
+      <div className="league-card"><div className="card-top"><div><span className="label">TOP COLLEGES</span><h2>Campus cup</h2></div><span className="trophy">✦</span></div><div className="league-table">{data.colleges.length ? data.colleges.map((item, index) => <div className="league-row" key={item.name}><strong>{index + 1}</strong><span className="college-icon">◎</span><span className="league-name">{item.name}<small>{item.players} players · {item.accuracy}% accuracy</small></span><b>{item.points}<small> pts</small></b></div>) : <p className="empty-state">No college scores yet.</p>}</div></div>
+    </div>
+  </section>;
 }

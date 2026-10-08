@@ -68,3 +68,14 @@ Only the host session can start or skip an active question. Answer submissions
 are checked against the active socket/session, current shuffled option mapping,
 deadline, and duplicate-answer state. Correct answers are included only in
 `question:reveal`, never in `question:start` or room state events.
+
+## College league
+
+Rooms can be associated with a college when created. Completed games write one
+league score entry per player. The REST league API supports:
+
+- `GET /api/league?period=today|week|all&collegeId=<id>&limit=<n>`
+- `GET /api/league/colleges`
+
+The client exposes the same filters from **View league**, with player and
+college standings for today, this week, or all time.

@@ -8,7 +8,8 @@ export const eventSchemas = Object.freeze({
   "room:create": z.object({
     playerName,
     questionSetId: z.coerce.number().int().positive().optional(),
-    collegeId: z.coerce.number().int().positive().optional()
+    collegeId: z.coerce.number().int().positive().optional(),
+    collegeName: z.string().trim().min(1).max(120).optional()
   }).strict(),
   "room:join": z.object({
     code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{5}$/, "Room code must be 5 characters."),

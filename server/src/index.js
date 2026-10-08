@@ -8,6 +8,7 @@ import { Server } from "socket.io";
 import database from "./db.js";
 import questionSetRoutes, { validationErrorHandler } from "./routes.js";
 import { registerGameSockets } from "./socketGame.js";
+import leagueRoutes, { leagueValidationErrorHandler } from "./leagueRoutes.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -35,6 +36,8 @@ app.get("/api/questions", (_request, response) => {
 });
 
 app.use("/api/question-sets", questionSetRoutes);
+app.use("/api/league", leagueRoutes);
+app.use(leagueValidationErrorHandler);
 app.use(validationErrorHandler);
 
 if (fs.existsSync(clientDist)) {

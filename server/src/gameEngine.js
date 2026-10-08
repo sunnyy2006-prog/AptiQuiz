@@ -96,6 +96,9 @@ export class GameRoom {
     const points = calculateScore({ isCorrect, timeLeftMs, timeLimitMs: this.options.timeLimitMs });
     player.answer = { shuffledIndex, originalIndex, isCorrect, points, answeredAt, answerTimeMs: answeredAt - emittedAt };
     player.score += points;
+    player.totalAnswers += 1;
+    player.correctAnswers += isCorrect ? 1 : 0;
+    player.totalAnswerTimeMs += answeredAt - emittedAt;
 
     if (this.allPlayersAnswered()) this.endQuestion();
     return { accepted: true, isCorrect, points, answerTimeMs: answeredAt - emittedAt };
@@ -176,7 +179,10 @@ export function createPlayer(id, name) {
     previousRank: null,
     questionEmittedAt: null,
     connected: true,
-    socketId: null
+    socketId: null,
+    totalAnswers: 0,
+    correctAnswers: 0,
+    totalAnswerTimeMs: 0
   };
 }
 

@@ -21,6 +21,14 @@ if (questionColumns.length > 0 && !questionColumns.includes("question_set_id")) 
   database.exec("ALTER TABLE questions RENAME TO questions_legacy");
 }
 
+const leagueScoreColumns = database
+  .prepare("PRAGMA table_info(league_scores)")
+  .all()
+  .map((column) => column.name);
+if (leagueScoreColumns.length > 0 && !leagueScoreColumns.includes("room_id")) {
+  database.exec("ALTER TABLE league_scores RENAME TO league_scores_legacy");
+}
+
 database.exec(`
   PRAGMA foreign_keys = ON;
 
@@ -83,17 +91,27 @@ database.exec(`
 
   CREATE TABLE IF NOT EXISTS league_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
     player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    college_id INTEGER REFERENCES colleges(id) ON DELETE SET NULL,
+    player_name TEXT NOT NULL,
     points INTEGER NOT NULL DEFAULT 0,
-    games_played INTEGER NOT NULL DEFAULT 0,
+    correct_answers INTEGER NOT NULL DEFAULT 0,
+    total_answers INTEGER NOT NULL DEFAULT 0,
+    average_answer_time_ms INTEGER NOT NULL DEFAULT 0,
+    played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(player_id)
+    UNIQUE(room_id, player_id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_questions_set_order
     ON questions(question_set_id, order_index);
   CREATE INDEX IF NOT EXISTS idx_players_room
     ON players(room_id);
+  CREATE INDEX IF NOT EXISTS idx_league_scores_played_at
+    ON league_scores(played_at);
+  CREATE INDEX IF NOT EXISTS idx_league_scores_college
+    ON league_scores(college_id);
 `);
 
 export default database;
