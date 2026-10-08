@@ -54,3 +54,10 @@ deadlines, answers, scoring, and leaderboard transitions. Clients can use:
 The server emits `room:state`, `question:start`, `question:reveal`,
 `game:answer-result`, and `game:leaderboard`. Game states progress through
 `lobby`, `question`, `reveal`, `leaderboard`, and `finished`.
+
+On `room:create` or `room:join`, the server returns a `sessionToken`. The
+client stores it in `localStorage` and sends it on subsequent joins. A
+reconnecting player keeps their score and player identity; if a question is
+active, the server sends the player-specific shuffled options and
+`remainingMs`. New players cannot join after the game starts, duplicate names
+are rejected, and finished rooms are closed to all joins.

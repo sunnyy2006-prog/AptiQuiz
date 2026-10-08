@@ -4,31 +4,80 @@ import { io } from "socket.io-client";
 const socket = io();
 
 export default function App() {
-  const [roomId, setRoomId] = useState("");
-  const [playerName, setPlayerName] = useState("");
+  const [roomId, setRoomId] = useState(() => localStorage.getItem("aptiquiz.roomCode") || "");
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem("aptiquiz.playerName") || "");
   const [joinedRoom, setJoinedRoom] = useState("");
   const [players, setPlayers] = useState([]);
   const [error, setError] = useState("");
+  const [gameState, setGameState] = useState("lobby");
+  const [currentQuestion, setCurrentQuestion] = useState(null);
 
   useEffect(() => {
-    const handleJoined = ({ roomId: joinedRoomId }) => setJoinedRoom(joinedRoomId);
     const handlePlayers = (roomPlayers) => setPlayers(roomPlayers);
-    const handleError = ({ message }) => setError(message);
+    const handleError = ({ message }) => {
+      setError(message);
+      if (/room not found|room is closed|session token is not valid/i.test(message)) {
+        localStorage.removeItem("aptiquiz.sessionToken");
+        localStorage.removeItem("aptiquiz.roomCode");
+      }
+    };
+    const handleJoined = ({ code, sessionToken, reconnected }) => {
+      setJoinedRoom(code);
+      localStorage.setItem("aptiquiz.sessionToken", sessionToken);
+      localStorage.setItem("aptiquiz.roomCode", code);
+      localStorage.setItem("aptiquiz.playerName", playerName);
+      if (reconnected) setError("");
+    };
+    const handleRoomState = ({ state, players: roomPlayers }) => {
+      setGameState(state);
+      setPlayers(roomPlayers);
+    };
+    const handleQuestion = (question) => setCurrentQuestion(question);
+    const handleConnect = () => {
+      const storedCode = localStorage.getItem("aptiquiz.roomCode");
+      const sessionToken = localStorage.getItem("aptiquiz.sessionToken");
+      const storedName = localStorage.getItem("aptiquiz.playerName");
+      if (storedCode && sessionToken) {
+        socket.emit("room:join", { code: storedCode, playerName: storedName, sessionToken });
+      }
+    };
 
+    socket.on("connect", handleConnect);
     socket.on("room:joined", handleJoined);
+    socket.on("room:created", handleJoined);
     socket.on("room:players", handlePlayers);
     socket.on("room:error", handleError);
+    socket.on("room:state", handleRoomState);
+    socket.on("question:start", handleQuestion);
+    socket.on("question:reveal", (reveal) => {
+      setGameState("reveal");
+      setCurrentQuestion(reveal);
+    });
+    socket.on("game:leaderboard", () => setGameState("leaderboard"));
     return () => {
       socket.off("room:joined", handleJoined);
+      socket.off("room:created", handleJoined);
       socket.off("room:players", handlePlayers);
       socket.off("room:error", handleError);
+      socket.off("room:state", handleRoomState);
+      socket.off("question:start", handleQuestion);
+      socket.off("question:reveal");
+      socket.off("game:leaderboard");
+      socket.off("connect", handleConnect);
     };
   }, []);
 
   function joinRoom(event) {
     event.preventDefault();
     setError("");
-    socket.emit("room:join", { roomId, playerName });
+    socket.emit("room:join", {
+      code: roomId,
+      playerName,
+      sessionToken: localStorage.getItem("aptiquiz.roomCode") === roomId.toUpperCase()
+        ? localStorage.getItem("aptiquiz.sessionToken") || undefined
+        : undefined
+    });
+    localStorage.setItem("aptiquiz.playerName", playerName);
   }
 
   return (
@@ -56,6 +105,27 @@ export default function App() {
                 </li>
               ))}
             </ul>
+            {currentQuestion && (
+              <div className="mt-8 border-t border-slate-800 pt-6">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
+                  {gameState} {currentQuestion.remainingMs ? `· ${Math.ceil(currentQuestion.remainingMs / 1000)}s remaining` : ""}
+                </p>
+                <h3 className="text-xl font-semibold">{currentQuestion.text}</h3>
+                <div className="mt-4 grid gap-2">
+                  {currentQuestion.options?.map((option, index) => (
+                    <button
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-left transition hover:border-cyan-400 hover:bg-slate-800"
+                      disabled={gameState !== "question"}
+                      key={`${option}-${index}`}
+                      onClick={() => socket.emit("game:answer", { optionIndex: index })}
+                      type="button"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         ) : (
           <form className="max-w-md space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl" onSubmit={joinRoom}>

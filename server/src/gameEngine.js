@@ -35,17 +35,29 @@ export class GameRoom {
   addPlayer(id, name) {
     if (this.state !== GAME_STATES.LOBBY) throw new Error("This game has already started.");
     if (this.players.size >= 50) throw new Error("This room is full.");
+    if ([...this.players.values()].some((player) => player.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("That player name is already in use.");
+    }
     this.players.set(id, createPlayer(id, name));
   }
 
-  removePlayer(id) {
-    this.players.delete(id);
-    if (this.hostId === id && this.players.size > 0) {
-      this.hostId = this.players.keys().next().value;
-    }
+  disconnectPlayer(id) {
+    const player = this.players.get(id);
+    if (!player) return;
+    player.connected = false;
+    player.socketId = null;
     if (this.state === GAME_STATES.QUESTION && this.allPlayersAnswered()) {
       this.endQuestion();
     }
+  }
+
+  reconnectPlayer(id, socketId) {
+    if (this.state === GAME_STATES.FINISHED) throw new Error("This room is closed.");
+    const player = this.players.get(id);
+    if (!player) throw new Error("That session token is not valid for this room.");
+    player.connected = true;
+    player.socketId = socketId;
+    return player;
   }
 
   start(requesterId) {
@@ -139,7 +151,8 @@ export class GameRoom {
   }
 
   allPlayersAnswered() {
-    return this.players.size > 0 && [...this.players.values()].every((player) => player.answer);
+    const connectedPlayers = [...this.players.values()].filter((player) => player.connected);
+    return connectedPlayers.length > 0 && connectedPlayers.every((player) => player.answer);
   }
 
   emitState() {
@@ -148,7 +161,16 @@ export class GameRoom {
 }
 
 export function createPlayer(id, name) {
-  return { id, name, score: 0, answer: null, previousRank: null, questionEmittedAt: null };
+  return {
+    id,
+    name,
+    score: 0,
+    answer: null,
+    previousRank: null,
+    questionEmittedAt: null,
+    connected: true,
+    socketId: null
+  };
 }
 
 export function shuffleIndices(length) {
