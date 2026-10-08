@@ -20,6 +20,13 @@ const questionColumns = database
 if (questionColumns.length > 0 && !questionColumns.includes("question_set_id")) {
   database.exec("ALTER TABLE questions RENAME TO questions_legacy");
 }
+if (questionColumns.length > 0 && !questionColumns.includes("explanation")) {
+  database.exec("ALTER TABLE questions ADD COLUMN explanation TEXT");
+}
+const playerColumns = database.prepare("PRAGMA table_info(players)").all().map((column) => column.name);
+if (playerColumns.length > 0 && !playerColumns.includes("session_token")) database.exec("ALTER TABLE players ADD COLUMN session_token TEXT");
+const leagueColumns = database.prepare("PRAGMA table_info(league_scores)").all().map((column) => column.name);
+if (leagueColumns.length > 0 && !leagueColumns.includes("badges")) database.exec("ALTER TABLE league_scores ADD COLUMN badges TEXT NOT NULL DEFAULT '[]'");
 
 const leagueScoreColumns = database
   .prepare("PRAGMA table_info(league_scores)")
@@ -57,6 +64,7 @@ database.exec(`
     difficulty TEXT NOT NULL CHECK (difficulty IN ('easy', 'medium', 'hard')),
     image_url TEXT,
     table_json TEXT,
+    explanation TEXT,
     order_index INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -76,6 +84,7 @@ database.exec(`
     room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     socket_id TEXT,
+    session_token TEXT UNIQUE,
     joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -101,6 +110,7 @@ database.exec(`
     average_answer_time_ms INTEGER NOT NULL DEFAULT 0,
     played_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    badges TEXT NOT NULL DEFAULT '[]',
     UNIQUE(room_id, player_id)
   );
 

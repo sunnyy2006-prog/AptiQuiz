@@ -20,9 +20,18 @@ export const eventSchemas = Object.freeze({
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["playerName"], message: "Player name is required for a new join." });
     }
   }),
+  "spectator:join": z.object({
+    code: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{5}$/, "Room code must be 5 characters.")
+  }).strict(),
   "game:start": emptyPayload,
   "game:skip": emptyPayload,
+  "host:pause": emptyPayload,
+  "host:resume": emptyPayload,
+  "host:add-time": z.object({ seconds: z.number().int().min(1).max(60) }).strict(),
   "host:results": emptyPayload,
+  "game:power-up": z.object({
+    type: z.enum(["doublePoints", "fiftyFifty"])
+  }).strict(),
   "game:answer": z.object({
     optionIndex: z.number().int().min(0).max(7)
   }).strict()

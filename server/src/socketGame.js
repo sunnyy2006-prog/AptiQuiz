@@ -1,4 +1,4 @@
-import { GameRoom, GAME_STATES } from "./gameEngine.js";
+import { GameRoom, GAME_STATES, getPowerUpView } from "./gameEngine.js";
 import { randomBytes } from "node:crypto";
 import { createEventHandler, SocketRateLimiter } from "./socketValidation.js";
 
@@ -6,6 +6,7 @@ const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export function registerGameSockets(io, database, options = {}) {
   const rooms = new Map();
+  const spectators = new Map();
   const timeLimitMs = options.timeLimitMs ?? (Number(process.env.QUESTION_TIME_LIMIT_MS) || 15000);
   const revealDurationMs = options.revealDurationMs ?? (Number(process.env.REVEAL_DURATION_MS) || 3000);
   const leaderboardDurationMs = options.leaderboardDurationMs ?? (Number(process.env.LEADERBOARD_DURATION_MS) || 3000);
@@ -29,12 +30,14 @@ export function registerGameSockets(io, database, options = {}) {
           options: { timeLimitMs, revealDurationMs, leaderboardDurationMs }
         });
         room.collegeId = collegeId;
+        room.questionSetId = payload.questionSetId ?? null;
         room.onStateChange = (currentRoom) => {
           if (currentRoom.state === GAME_STATES.FINISHED) {
             persistLeagueScores(database, currentRoom);
             setRoomStatus(database, currentRoom.code, "completed");
           }
           broadcastRoom(io, currentRoom);
+          broadcastSpectators(io, spectators, currentRoom);
         };
         rooms.set(code, room);
         socket.join(code);
@@ -88,6 +91,18 @@ export function registerGameSockets(io, database, options = {}) {
         }
     }, limiter));
 
+    socket.on("spectator:join", createEventHandler(socket, "spectator:join", ({ code }) => {
+      if (socket.data.roomCode || socket.data.spectatorRoomCode) {
+        throw new Error("Leave your current room before spectating another room.");
+      }
+      const room = rooms.get(code);
+      if (!room) throw new Error("Room not found.");
+      socket.data.spectatorRoomCode = code;
+      if (!spectators.has(code)) spectators.set(code, new Set());
+      spectators.get(code).add(socket.id);
+      socket.emit("spectator:joined", publicRoomView(room));
+    }, limiter));
+
     socket.on("game:start", createEventHandler(socket, "game:start", () => {
       const room = rooms.get(socket.data.roomCode);
       if (!room) return socket.emit("room:error", { message: "Join a room first." });
@@ -99,6 +114,32 @@ export function registerGameSockets(io, database, options = {}) {
       const room = rooms.get(socket.data.roomCode);
       if (!room) return socket.emit("room:error", { message: "Join a room first." });
       room.skip(socket.data.playerId);
+    }, limiter));
+
+    socket.on("host:pause", createEventHandler(socket, "host:pause", () => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) throw new Error("Join a room first.");
+      room.pause(socket.data.playerId);
+    }, limiter));
+
+    socket.on("host:resume", createEventHandler(socket, "host:resume", () => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) throw new Error("Join a room first.");
+      room.resume(socket.data.playerId);
+    }, limiter));
+
+    socket.on("host:add-time", createEventHandler(socket, "host:add-time", ({ seconds }) => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) throw new Error("Join a room first.");
+      room.addTime(socket.data.playerId, seconds);
+    }, limiter));
+
+    socket.on("game:power-up", createEventHandler(socket, "game:power-up", ({ type }) => {
+      const room = rooms.get(socket.data.roomCode);
+      if (!room) return socket.emit("power-up:result", { accepted: false, reason: "Join a room first." });
+      const result = room.usePowerUp(socket.data.playerId, type);
+      socket.emit("power-up:result", result);
+      if (result.accepted) sendPlayerView(io, socket, room, socket.data.playerId);
     }, limiter));
 
     socket.on("host:results", createEventHandler(socket, "host:results", () => {
@@ -118,10 +159,20 @@ export function registerGameSockets(io, database, options = {}) {
       }
       const result = room.answer(socket.data.playerId, optionIndex);
       socket.emit("game:answer-result", result);
-      if (result.accepted) persistAnswer(database, room, socket.data.playerId);
+      if (result.accepted) {
+        persistAnswer(database, room, socket.data.playerId);
+        broadcastSpectators(io, spectators, room);
+      }
     }, answerLimiter));
 
     socket.on("disconnect", () => {
+      const spectatorCode = socket.data.spectatorRoomCode;
+      if (spectatorCode) {
+        const roomSpectators = spectators.get(spectatorCode);
+        roomSpectators?.delete(socket.id);
+        if (roomSpectators?.size === 0) spectators.delete(spectatorCode);
+        return;
+      }
       const code = socket.data.roomCode;
       const room = rooms.get(code);
       if (!room) return;
@@ -131,6 +182,52 @@ export function registerGameSockets(io, database, options = {}) {
   });
 
   return rooms;
+}
+
+function broadcastSpectators(io, spectators, room) {
+  const roomSpectators = spectators.get(room.code);
+  if (!roomSpectators?.size) return;
+  const view = publicRoomView(room);
+  for (const socketId of roomSpectators) io.to(socketId).emit("spectator:update", view);
+}
+
+function publicRoomView(room) {
+  const players = getLeaderboard(room);
+  const view = {
+    code: room.code,
+    state: room.state,
+    questionNumber: room.questionIndex + 1,
+    totalQuestions: room.questions.length,
+    playersOnline: [...room.players.values()].filter((player) => player.connected).length,
+    leaderboard: players
+  };
+  if ((room.state === GAME_STATES.QUESTION || room.state === GAME_STATES.PAUSED) && room.currentQuestion) {
+    view.question = {
+      text: room.currentQuestion.text,
+      topic: room.currentQuestion.topic,
+      options: room.currentQuestion.options,
+      imageUrl: room.currentQuestion.imageUrl,
+      tableJson: room.currentQuestion.tableJson,
+      timeLimitMs: room.options.timeLimitMs,
+      remainingMs: room.state === GAME_STATES.PAUSED
+        ? room.pausedRemainingMs
+        : Math.max(0, room.questionDeadline - room.now()),
+      paused: room.state === GAME_STATES.PAUSED,
+      answerCount: [...room.players.values()].filter((player) => player.answer).length
+    };
+  }
+  if (room.state === GAME_STATES.REVEAL && room.currentQuestion) {
+    view.question = {
+      text: room.currentQuestion.text,
+      topic: room.currentQuestion.topic,
+      options: room.currentQuestion.options,
+      correctIndex: room.currentQuestion.correctIndex,
+      correctOption: room.currentQuestion.options[room.currentQuestion.correctIndex],
+      explanation: room.currentQuestion.explanation,
+      answerCount: [...room.players.values()].filter((player) => player.answer).length
+    };
+  }
+  return view;
 }
 
 function normalizeName(value) {
@@ -152,6 +249,7 @@ function loadQuestions(database, questionSetId) {
     topic: question.topic,
     imageUrl: question.image_url,
     tableJson: question.table_json === null ? null : JSON.parse(question.table_json)
+    ,explanation: question.explanation
   }));
 }
 
@@ -192,15 +290,18 @@ function persistLeagueScores(database, room) {
   const insert = database.prepare(`
     INSERT OR IGNORE INTO league_scores
       (room_id, player_id, college_id, player_name, points, correct_answers, total_answers,
-       average_answer_time_ms, played_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       average_answer_time_ms, badges, played_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `);
   database.transaction(() => {
     for (const player of room.players.values()) {
       const dbPlayer = database.prepare("SELECT id FROM players WHERE room_id = ? AND name = ?").get(dbRoom.id, player.name);
       if (!dbPlayer) continue;
       const average = player.totalAnswers ? Math.round(player.totalAnswerTimeMs / player.totalAnswers) : 0;
-      insert.run(dbRoom.id, dbPlayer.id, room.collegeId ?? null, player.name, player.score, player.correctAnswers, player.totalAnswers, average);
+      const badges = [...player.badges];
+      const collegePlayers = [...room.players.values()].filter((candidate) => candidate.collegeId === player.collegeId);
+      if (room.collegeId && player.collegeId === room.collegeId && player.score === Math.max(...collegePlayers.map((candidate) => candidate.score))) badges.push("Top of the College");
+      insert.run(dbRoom.id, dbPlayer.id, room.collegeId ?? null, player.name, player.score, player.correctAnswers, player.totalAnswers, average, JSON.stringify([...new Set(badges)]));
     }
   })();
   room.leagueScoresPersisted = true;
@@ -212,10 +313,10 @@ function persistPlayer(database, room, playerId, socketId) {
   player.socketId = socketId;
   player.connected = true;
   database.prepare(`
-    INSERT OR IGNORE INTO players (room_id, name, socket_id)
-    VALUES (?, ?, ?)
-  `).run(dbRoom.id, player.name, socketId);
-  database.prepare("UPDATE players SET socket_id = ? WHERE room_id = ? AND name = ?").run(socketId, dbRoom.id, player.name);
+    INSERT OR IGNORE INTO players (room_id, name, socket_id, session_token)
+    VALUES (?, ?, ?, ?)
+  `).run(dbRoom.id, player.name, socketId, playerId);
+  database.prepare("UPDATE players SET socket_id = ?, session_token = ? WHERE room_id = ? AND name = ?").run(socketId, playerId, dbRoom.id, player.name);
 }
 
 function setRoomStatus(database, code, status) {
@@ -291,6 +392,7 @@ function buildHostResults(database, room) {
     .map((row) => ({ ...row, isCorrect: Boolean(row.isCorrect) }));
   return {
     roomCode: room.code,
+    questionSetId: room.questionSetId ?? null,
     completedAt: new Date().toISOString(),
     questions,
     topics,
@@ -302,7 +404,7 @@ function buildHostResults(database, room) {
 function broadcastRoom(io, room) {
   const players = getLeaderboard(room);
   sendRoomState(io, null, room, players);
-  if (room.state === GAME_STATES.QUESTION) {
+  if (room.state === GAME_STATES.QUESTION || room.state === GAME_STATES.PAUSED) {
     for (const [playerId] of room.players) sendPlayerView(io, null, room, playerId);
   } else if (room.state === GAME_STATES.REVEAL) {
     for (const [playerId] of room.players) sendPlayerView(io, null, room, playerId, players);
@@ -319,7 +421,8 @@ function sendRoomState(io, socket, room, players = getLeaderboard(room)) {
     hostName: room.players.get(room.hostId)?.name,
     players: players.map(({ name, score, connected }) => ({ name, score, connected })),
     questionNumber: room.questionIndex + 1,
-    totalQuestions: room.questions.length
+    totalQuestions: room.questions.length,
+    questionSetId: room.questionSetId ?? null
   });
 }
 
@@ -327,7 +430,7 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
   const player = room.players.get(playerId);
   if (!player || (!socket && !player.connected)) return;
   const target = socket || io.to(player.socketId);
-  if (room.state === GAME_STATES.QUESTION) {
+  if (room.state === GAME_STATES.QUESTION || room.state === GAME_STATES.PAUSED) {
     const mapping = room.currentQuestion.mappings.get(playerId);
     if (player.questionEmittedAt === null) room.markQuestionEmitted(playerId);
     target.emit("question:start", {
@@ -338,9 +441,17 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
       imageUrl: room.currentQuestion.imageUrl,
       tableJson: room.currentQuestion.tableJson,
       timeLimitMs: room.options.timeLimitMs,
-      remainingMs: Math.max(0, room.roundStartedAt + room.options.timeLimitMs - room.now()),
+      remainingMs: room.state === GAME_STATES.PAUSED
+        ? room.pausedRemainingMs
+        : Math.max(0, room.questionDeadline - room.now()),
+      paused: room.state === GAME_STATES.PAUSED,
       questionNumber: room.questionIndex + 1,
-      totalQuestions: room.questions.length
+      totalQuestions: room.questions.length,
+      powerUps: getPowerUpView(player),
+      removedOptionIndices: player.powerUps.fiftyFiftyQuestionId === room.currentQuestion.id
+        ? player.powerUps.fiftyFiftyRemoved
+        : [],
+      streak: player.currentStreak
     });
   } else if (room.state === GAME_STATES.REVEAL) {
     const mapping = room.currentQuestion.mappings.get(playerId);
@@ -356,7 +467,8 @@ function sendPlayerView(io, socket, room, playerId, players = getLeaderboard(roo
       answer: player.answer ? {
         selectedIndex: player.answer.shuffledIndex,
         isCorrect: player.answer.isCorrect,
-        points: player.answer.points
+        points: player.answer.points,
+        doublePointsApplied: player.answer.doublePointsApplied
       } : null,
       leaderboard: players
     });
@@ -371,6 +483,6 @@ function getLeaderboard(room) {
     const rank = index + 1;
     const change = player.previousRank === null ? "new" : rank < player.previousRank ? "climbed" : rank > player.previousRank ? "dropped" : "same";
     player.previousRank = rank;
-    return { name: player.name, score: player.score, rank, rankChange: change, connected: player.connected };
+    return { name: player.name, score: player.score, rank, rankChange: change, connected: player.connected, streak: player.currentStreak, badges: room.state === GAME_STATES.FINISHED ? player.badges : [] };
   });
 }
